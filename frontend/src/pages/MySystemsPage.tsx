@@ -6,6 +6,7 @@ import { useLabStore } from "../store/labStore";
 export function MySystemsPage(): JSX.Element {
   const navigate = useNavigate();
   const loadGraphJson = useLabStore((state) => state.loadGraphJson);
+  const setActiveSystemId = useLabStore((state) => state.setActiveSystemId);
   const systemsQuery = useQuery({ queryKey: ["systems"], queryFn: fetchSystems });
 
   if (systemsQuery.isLoading) return <div>Loading systems...</div>;
@@ -28,7 +29,14 @@ export function MySystemsPage(): JSX.Element {
               className="btn-secondary"
               onClick={() => {
                 loadGraphJson(system.graph_json);
-                navigate("/app/lab");
+                setActiveSystemId(system.id);
+                navigate("/app/lab", {
+                  state: {
+                    systemId: system.id,
+                    systemTitle: system.title,
+                    systemGraph: system.graph_json,
+                  },
+                });
               }}
             >
               Open in Lab

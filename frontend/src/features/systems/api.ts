@@ -22,3 +22,23 @@ export async function createSystem(payload: {
   const { data } = await api.post<SystemModel>("/systems", payload);
   return data;
 }
+
+export async function updateSystem(
+  systemId: number,
+  payload: {
+    title?: string;
+    graph_json?: Record<string, unknown>;
+    owner_id?: number;
+    lesson_id?: number | null;
+    is_public?: boolean;
+    is_template?: boolean;
+  },
+): Promise<SystemModel> {
+  const { data } = await api.put<SystemModel>(`/systems/${systemId}`, payload);
+  return data;
+}
+
+export async function deleteSystem(systemId: number): Promise<SystemModel> {
+  const { data } = await api.delete<SystemModel>(`/systems/${systemId}`);
+  return data;
+}

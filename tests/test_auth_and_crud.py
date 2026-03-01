@@ -109,6 +109,34 @@ def test_systems_crud(client):
     assert delete.status_code == status.HTTP_200_OK
 
 
+def test_systems_duplicate_title_not_allowed(client):
+    user = register_user(client, email="system-dup@example.com")
+    token = login_user(client, email="system-dup@example.com")
+    headers = auth_headers(token)
+
+    create_first = client.post(
+        "/systems",
+        json={
+            "owner_id": user["id"],
+            "title": "System A",
+            "graph_json": {"nodes": [], "edges": []},
+        },
+        headers=headers,
+    )
+    assert create_first.status_code == status.HTTP_200_OK
+
+    create_duplicate = client.post(
+        "/systems",
+        json={
+            "owner_id": user["id"],
+            "title": "  system   a  ",
+            "graph_json": {"nodes": [], "edges": []},
+        },
+        headers=headers,
+    )
+    assert create_duplicate.status_code == status.HTTP_409_CONFLICT
+
+
 def test_runs_flow(client):
     user = register_user(client, email="sim@example.com")
     token = login_user(client, email="sim@example.com")

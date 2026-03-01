@@ -17,6 +17,7 @@ export function TaskExecutionPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const loadGraphJson = useLabStore((state) => state.loadGraphJson);
+  const setActiveSystemId = useLabStore((state) => state.setActiveSystemId);
 
   const taskQuery = useQuery({
     queryKey: ["lesson-task", parsedTaskId],
@@ -78,7 +79,14 @@ export function TaskExecutionPage(): JSX.Element {
             onClick={async () => {
               const system = await fetchSystem(task.system_id as number);
               loadGraphJson(system.graph_json);
-              navigate("/app/lab");
+              setActiveSystemId(system.id);
+              navigate("/app/lab", {
+                state: {
+                  systemId: system.id,
+                  systemTitle: system.title,
+                  systemGraph: system.graph_json,
+                },
+              });
             }}
           >
             Open task system

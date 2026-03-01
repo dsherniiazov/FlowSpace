@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { fetchSystems } from "../features/systems/api";
+import { deleteSystem, fetchSystems } from "../features/systems/api";
 import { changeUserPassword, deleteUser, getAvatarUrl, uploadUserAvatar } from "../features/users/api";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
@@ -15,6 +15,7 @@ export function ProfilePage(): JSX.Element {
   const isAdmin = useAuthStore((state) => state.isAdmin);
   const clearSession = useAuthStore((state) => state.clearSession);
   const loadGraphJson = useLabStore((state) => state.loadGraphJson);
+  const setActiveSystemId = useLabStore((state) => state.setActiveSystemId);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -65,6 +66,12 @@ export function ProfilePage(): JSX.Element {
       queryClient.invalidateQueries({ queryKey: ["profile", userId] });
     },
     onError: () => setPasswordMessage("Unable to update password."),
+  });
+  const deleteSystemMutation = useMutation({
+    mutationFn: async (systemId: number) => deleteSystem(systemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["systems"] });
+    },
   });
 
   if (profileQuery.isLoading) return <div>Loading profile...</div>;
@@ -208,15 +215,35 @@ export function ProfilePage(): JSX.Element {
                   <div className="font-semibold text-zinc-100">{system.title}</div>
                   <div className="text-xs text-zinc-500">ID {system.id}</div>
                 </div>
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    loadGraphJson(system.graph_json);
-                    navigate("/app/lab");
-                  }}
-                >
-                  Open in Lab
-                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      loadGraphJson(system.graph_json);
+                      setActiveSystemId(system.id);
+                      navigate("/app/lab", {
+                        state: {
+                          systemId: system.id,
+                          systemTitle: system.title,
+                          systemGraph: system.graph_json,
+                        },
+                      });
+                    }}
+                  >
+                    Open in Lab
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      if (window.confirm(`Delete system "${system.title}"?`)) {
+                        deleteSystemMutation.mutate(system.id);
+                      }
+                    }}
+                    disabled={deleteSystemMutation.isPending}
+                  >
+                    {deleteSystemMutation.isPending ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
               </div>
             </div>
           ))}
