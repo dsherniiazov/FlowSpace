@@ -188,6 +188,12 @@ export function ControlLessonsPage(): JSX.Element {
     setEditingSectionId(null);
   }
 
+  function removeSection(sectionId: number): void {
+    if (deleteSectionMutation.isPending) return;
+    if (!window.confirm("Delete section? Lessons will become unassigned.")) return;
+    deleteSectionMutation.mutate(sectionId);
+  }
+
   return (
     <section className="space-y-4">
       <form className="panel space-y-3 p-4" onSubmit={onCreateSection}>
@@ -223,7 +229,17 @@ export function ControlLessonsPage(): JSX.Element {
               <span>{section.title}</span>
             </div>
             <div className="flex items-center gap-2">
-              <button className="btn-secondary" onClick={() => startEditSection(section)}>Edit</button>
+              <button className="btn-secondary" type="button" onClick={() => startEditSection(section)}>
+                Edit
+              </button>
+              <button
+                className="btn-secondary"
+                type="button"
+                disabled={deleteSectionMutation.isPending}
+                onClick={() => removeSection(section.id)}
+              >
+                {deleteSectionMutation.isPending ? "Deleting..." : "Delete"}
+              </button>
             </div>
           </div>
         ))}
@@ -414,13 +430,11 @@ export function ControlLessonsPage(): JSX.Element {
               <button className="btn-primary" onClick={saveSectionEdit}>Save section</button>
               <button
                 className="btn-secondary"
-                onClick={() => {
-                  if (window.confirm("Delete section? Lessons will become unassigned.")) {
-                    deleteSectionMutation.mutate(editingSectionId);
-                  }
-                }}
+                type="button"
+                disabled={deleteSectionMutation.isPending}
+                onClick={() => removeSection(editingSectionId)}
               >
-                Delete section
+                {deleteSectionMutation.isPending ? "Deleting..." : "Delete section"}
               </button>
             </div>
           </div>

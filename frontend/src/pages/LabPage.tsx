@@ -5,7 +5,12 @@ import { useLocation } from "react-router-dom";
 import "reactflow/dist/style.css";
 
 import { ConstantNode } from "../components/ConstantNode";
-import { BalancingSubmitPayload, ConnectedFlowOption, FeedbackLoopModal } from "../components/FeedbackLoopModal";
+import {
+  BalancingSubmitPayload,
+  ConnectedFlowOption,
+  FeedbackLoopModal,
+  ReinforcingSubmitPayload,
+} from "../components/FeedbackLoopModal";
 import { FlowNode } from "../components/FlowNode";
 import { StockNode } from "../components/StockNode";
 import { VariableNode } from "../components/VariableNode";
@@ -13,7 +18,7 @@ import { SimulationChart } from "../components/SimulationChart";
 import { createSystem, fetchSystems, updateSystem } from "../features/systems/api";
 import { RunStep, SystemModel } from "../types/api";
 import { useAuthStore } from "../store/authStore";
-import { BalancingFeedbackLoop, STOCK_COLOR_PRESETS, useLabStore } from "../store/labStore";
+import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, STOCK_COLOR_PRESETS, useLabStore } from "../store/labStore";
 
 const DEFAULT_ZOOM = 0.6;
 const MIN_ZOOM = 0.06;
@@ -228,6 +233,16 @@ function feedbackLoopHandlePolicy(
     return { targetAllowed: ["target-top", "target-bottom"] };
   }
 
+  // Stock -> Reinforcing Multiplier should leave stock via top/bottom handles only.
+  if (isStockNode(sourceNode) && targetRole === "reinforcingMultiplier") {
+    return { sourceAllowed: ["source-top", "source-bottom"] };
+  }
+
+  // Reinforcing Multiplier -> Flow should enter flow via top/bottom handles only.
+  if (sourceRole === "reinforcingMultiplier" && isFlowNode(targetNode)) {
+    return { targetAllowed: ["target-top", "target-bottom"] };
+  }
+
   return {};
 }
 
@@ -387,6 +402,54 @@ function proposeCorrectivePosition(flowNode: Node): { x: number; y: number } {
   return { x, y };
 }
 
+function proposeReinforcingLoopPositions(
+  stockNode: Node,
+  flowNode: Node,
+  existingNodes: Node[],
+  includeGrowthLimit: boolean,
+): {
+  multiplier: { x: number; y: number };
+  growthLimit?: { x: number; y: number };
+  marker: { x: number; y: number };
+} {
+  const occupied: NodeRect[] = existingNodes.map((node) => {
+    const size = getNodeSize(node);
+    return { x: node.position.x, y: node.position.y, width: size.width, height: size.height };
+  });
+  const stockCenter = getNodeCenter(stockNode);
+  const flowCenter = getNodeCenter(flowNode);
+  const multiplierSize = { width: 190, height: 34 };
+  const markerSize = { width: 34, height: 34 };
+
+  const multiplier = resolveFreePosition(
+    {
+      x: (stockCenter.x + flowCenter.x) / 2 - multiplierSize.width / 2,
+      y: Math.min(stockCenter.y, flowCenter.y) - 84,
+    },
+    multiplierSize,
+    occupied,
+  );
+  const growthLimit = includeGrowthLimit
+    ? resolveFreePosition(
+        {
+          x: multiplier.x,
+          y: multiplier.y - 78,
+        },
+        multiplierSize,
+        occupied,
+      )
+    : undefined;
+  const marker = resolveFreePosition(
+    {
+      x: (stockCenter.x + flowCenter.x + (multiplier.x + multiplierSize.width / 2)) / 3 - markerSize.width / 2,
+      y: (stockCenter.y + flowCenter.y + (multiplier.y + multiplierSize.height / 2)) / 3 - markerSize.height / 2,
+    },
+    markerSize,
+    occupied,
+  );
+  return { multiplier, growthLimit, marker };
+}
+
 function LockToggleIcon({ locked }: { locked: boolean }): JSX.Element {
   if (locked) {
     return (
@@ -471,8 +534,10 @@ export function LabPage(): JSX.Element {
     clearSimulation,
     setSimulationSteps,
     replaceGraph,
+    resetToInitialGraph,
     loadGraphJson,
     createBalancingFeedbackLoop,
+    createReinforcingFeedbackLoop,
     updateBalancingFeedbackLoop,
     deleteBalancingFeedbackLoop,
   } = useLabStore();
@@ -608,8 +673,8 @@ export function LabPage(): JSX.Element {
   }, [location.state, loadGraphJson, setActiveSystemId]);
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
-  const editingFeedbackLoop = useMemo<BalancingFeedbackLoop | null>(
-    () => feedbackLoops.find((loop) => loop.id === editingFeedbackLoopId) ?? null,
+  const editingFeedbackLoop = useMemo<FeedbackLoop | null>(
+    () => feedbackLoops.find((item) => item.id === editingFeedbackLoopId) ?? null,
     [feedbackLoops, editingFeedbackLoopId],
   );
   const activeFeedbackLoopStockId = editingFeedbackLoop?.stockId ?? createFeedbackLoopStockId;
@@ -628,12 +693,19 @@ export function LabPage(): JSX.Element {
         ...loop,
         stockLabel: String(nodesById.get(loop.stockId)?.data?.label ?? loop.stockId),
         flowLabel: String(nodesById.get(loop.controlledFlowId)?.data?.label ?? loop.controlledFlowId),
-        correctiveLabel: String(nodesById.get(loop.correctiveNodeId)?.data?.label ?? "Corrective Action"),
+        loopLabel:
+          loop.type === "balancing"
+            ? String(nodesById.get(loop.correctiveNodeId)?.data?.label ?? "Corrective Action")
+            : String(nodesById.get(loop.multiplierNodeId)?.data?.label ?? "Multiplier"),
       })),
     [feedbackLoops, nodesById],
   );
-  const feedbackLoopModalInitialValues = useMemo<Partial<BalancingSubmitPayload> | undefined>(() => {
-    if (!editingFeedbackLoop) return undefined;
+  const feedbackLoopModalInitialTab = useMemo<"balancing" | "reinforcing" | undefined>(
+    () => (editingFeedbackLoop ? editingFeedbackLoop.type : undefined),
+    [editingFeedbackLoop],
+  );
+  const feedbackLoopModalInitialBalancingValues = useMemo<Partial<BalancingSubmitPayload> | undefined>(() => {
+    if (!editingFeedbackLoop || editingFeedbackLoop.type !== "balancing") return undefined;
     return {
       boundaryType: editingFeedbackLoop.boundaryType,
       goalValue: editingFeedbackLoop.goalValue,
@@ -643,6 +715,26 @@ export function LabPage(): JSX.Element {
       delayEnabled: editingFeedbackLoop.delayEnabled,
       delaySteps: editingFeedbackLoop.delaySteps,
       correctiveLabel: String(nodesById.get(editingFeedbackLoop.correctiveNodeId)?.data?.label ?? "Corrective Action"),
+    };
+  }, [editingFeedbackLoop, nodesById]);
+  const feedbackLoopModalInitialReinforcingValues = useMemo<Partial<ReinforcingSubmitPayload> | undefined>(() => {
+    if (!editingFeedbackLoop || editingFeedbackLoop.type !== "reinforcing") return undefined;
+    return {
+      k: editingFeedbackLoop.k,
+      controlledFlowId: editingFeedbackLoop.controlledFlowId,
+      polarity: editingFeedbackLoop.polarity,
+      delayEnabled: editingFeedbackLoop.delayEnabled,
+      delaySteps: editingFeedbackLoop.delaySteps,
+      growthLimit:
+        editingFeedbackLoop.growthLimitNodeId
+          ? asNumber(nodesById.get(editingFeedbackLoop.growthLimitNodeId)?.data?.quantity, 0)
+          : undefined,
+      clampNonNegative: editingFeedbackLoop.clampNonNegative,
+      multiplierLabel:
+        (() => {
+          const raw = String(nodesById.get(editingFeedbackLoop.multiplierNodeId)?.data?.label ?? "Multiplier");
+          return raw === "(R)" ? "Multiplier" : raw;
+        })(),
     };
   }, [editingFeedbackLoop, nodesById]);
   useEffect(() => {
@@ -722,8 +814,42 @@ export function LabPage(): JSX.Element {
 
   const displayedNodes: Node[] = useMemo(() => {
     const displayPrecision = algorithm === "rk4_v2" ? 8 : 3;
-    const loopByDiscrepancyId = new Map(feedbackLoops.map((loop) => [loop.discrepancyNodeId, loop] as const));
+    const balancingLoops = feedbackLoops.filter((loop): loop is BalancingFeedbackLoop => loop.type === "balancing");
+    const reinforcingLoops = feedbackLoops.filter((loop): loop is ReinforcingFeedbackLoop => loop.type === "reinforcing");
+    const loopByDiscrepancyId = new Map(balancingLoops.map((loop) => [loop.discrepancyNodeId, loop] as const));
+    const loopByMultiplierId = new Map(reinforcingLoops.map((loop) => [loop.multiplierNodeId, loop] as const));
+    const reinforcingLoopById = new Map(reinforcingLoops.map((loop) => [loop.id, loop] as const));
     const baseNodes = nodes.map((node) => {
+      const isReinforcingMarkerNode = String(node.data?.loopRole ?? "") === "reinforcingMarker";
+      if (isReinforcingMarkerNode) {
+        const loopId = String(node.data?.loopId ?? "");
+        const loop = reinforcingLoopById.get(loopId);
+        if (!loop) return node;
+        const stockNode = nodesById.get(loop.stockId);
+        const multiplierNode = nodesById.get(loop.multiplierNodeId);
+        const flowNode = nodesById.get(loop.controlledFlowId);
+        if (!stockNode || !multiplierNode || !flowNode) return node;
+        const stockCenter = getNodeCenter(stockNode);
+        const multiplierCenter = getNodeCenter(multiplierNode);
+        const flowCenter = getNodeCenter(flowNode);
+        const markerWidth = 28;
+        const markerHeight = 20;
+        const centerX = (stockCenter.x + multiplierCenter.x + flowCenter.x) / 3;
+        const centerY = (stockCenter.y + multiplierCenter.y + flowCenter.y) / 3;
+        return {
+          ...node,
+          position: {
+            x: centerX - markerWidth / 2,
+            y: centerY - markerHeight / 2,
+          },
+          data: {
+            ...node.data,
+            quantity: "",
+            displayQuantity: "",
+            label: String(node.data?.label ?? "(R)"),
+          },
+        };
+      }
       const liveValue = currentSnapshot?.values[node.id];
       const quantity =
         liveValue !== undefined && !isFlowNode(node)
@@ -757,17 +883,24 @@ export function LabPage(): JSX.Element {
         centroid && discrepancyCenter ? Math.max(-520, Math.min(520, centroid.x - discrepancyCenter.x)) : undefined;
       const balancingBadgeOffsetY =
         centroid && discrepancyCenter ? Math.max(-360, Math.min(360, centroid.y - discrepancyCenter.y)) : undefined;
+      const reinforcingLoop = loopByMultiplierId.get(node.id);
+      const reinforcingCollapsed =
+        reinforcingLoop && Math.abs(asNumber(reinforcingLoop.k, 1) - 1) <= 1e-9
+          ? String(node.data?.label ?? "") === "(R)"
+          : false;
       return {
         ...node,
         data: {
           ...node.data,
           quantity,
           bottleneck,
-          displayQuantity: formatDisplayNumber(quantity, displayPrecision),
+          displayQuantity: reinforcingCollapsed ? "" : formatDisplayNumber(quantity, displayPrecision),
           displayBottleneck: formatDisplayNumber(bottleneck, displayPrecision),
           balancingLoopType: discrepancyLoop ? "B" : "",
           balancingBadgeOffsetX,
           balancingBadgeOffsetY,
+          reinforcingCollapsed,
+          reinforcingK: reinforcingLoop?.k,
         },
       };
     });
@@ -815,6 +948,22 @@ export function LabPage(): JSX.Element {
             labelBgStyle: { fill: "#050505" },
             markerEnd: { type: MarkerType.ArrowClosed, color: "#ef4444" },
             data: { ...(edge.data ?? {}), kind: "outflow", weight: -1 },
+          };
+        }
+        const reinforcingPolarity = String(edge.data?.reinforcingPolarity ?? "");
+        if (edge.data?.feedbackLoopType === "reinforcing" && (reinforcingPolarity === "positive" || reinforcingPolarity === "negative")) {
+          const color = reinforcingPolarity === "positive" ? "#22c55e" : "#ef4444";
+          return {
+            ...edge,
+            sourceHandle,
+            targetHandle,
+            className: `lab-edge-reinforcing-${reinforcingPolarity}`,
+            label: String(edge.label ?? ""),
+            style: { stroke: color, strokeWidth: 2.1 },
+            labelStyle: { fill: color, fontWeight: 700 },
+            labelBgStyle: { fill: "#050505" },
+            markerEnd: { type: MarkerType.ArrowClosed, color },
+            data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
           };
         }
         const isControl =
@@ -870,13 +1019,20 @@ export function LabPage(): JSX.Element {
     const stepDt = Math.max(0.000001, asNumber(dt, 1));
     const expressionNodes = nodes.filter((node) => isConstantNode(node) || isVariableNode(node));
     const goalFallbackByLoopId = new Map<string, number>();
-    const loopsByFlowId = new Map<string, BalancingFeedbackLoop[]>();
+    const balancingLoopsByFlowId = new Map<string, BalancingFeedbackLoop[]>();
+    const reinforcingLoopsByFlowId = new Map<string, ReinforcingFeedbackLoop[]>();
     for (const loop of feedbackLoops) {
-      const list = loopsByFlowId.get(loop.controlledFlowId) ?? [];
-      list.push(loop);
-      loopsByFlowId.set(loop.controlledFlowId, list);
-      const goalNode = nodesById.get(loop.goalNodeId);
-      goalFallbackByLoopId.set(loop.id, asNumber(goalNode?.data?.quantity, loop.goalValue));
+      if (loop.type === "balancing") {
+        const list = balancingLoopsByFlowId.get(loop.controlledFlowId) ?? [];
+        list.push(loop);
+        balancingLoopsByFlowId.set(loop.controlledFlowId, list);
+        const goalNode = nodesById.get(loop.goalNodeId);
+        goalFallbackByLoopId.set(loop.id, asNumber(goalNode?.data?.quantity, loop.goalValue));
+      } else {
+        const list = reinforcingLoopsByFlowId.get(loop.controlledFlowId) ?? [];
+        list.push(loop);
+        reinforcingLoopsByFlowId.set(loop.controlledFlowId, list);
+      }
     }
     const stateHistory: Record<string, number>[] = [];
     const loopZeroHoldById = new Map<string, boolean>();
@@ -934,8 +1090,21 @@ export function LabPage(): JSX.Element {
       return gap / adjustmentTime;
     }
 
+    function reinforcingMultiplierFromScope(
+      loop: ReinforcingFeedbackLoop,
+      scope: Record<string, number> | null,
+    ): number {
+      if (!scope) return 0;
+      const stockValue = asNumber(scope[loop.stockId], 0);
+      const k = asNumber(loop.k, 1);
+      if (!loop.growthLimitNodeId) return k * stockValue;
+      const growthLimit = asNumber(scope[loop.growthLimitNodeId], 0);
+      return k * stockValue * Math.max(0, growthLimit - stockValue);
+    }
+
     state = resolveExpressionNodes(state, {});
     for (const loop of feedbackLoops) {
+      if (loop.type !== "balancing") continue;
       const discrepancy = loopGapWithDelay(loop, state);
       state[loop.discrepancyNodeId] = discrepancy;
       state[loop.correctiveNodeId] = discrepancy > 1e-9 ? loopCorrectiveFromGap(loop, discrepancy) : 0;
@@ -958,14 +1127,18 @@ export function LabPage(): JSX.Element {
 
       for (const node of nodes) {
         if (!isFlowNode(node)) continue;
-        const flowLoops = loopsByFlowId.get(node.id) ?? [];
-        const isLoopControlledFlow = flowLoops.length > 0;
+        const balancingFlowLoops = balancingLoopsByFlowId.get(node.id) ?? [];
+        const reinforcingFlowLoops = reinforcingLoopsByFlowId.get(node.id) ?? [];
+        const isLoopControlledFlow = balancingFlowLoops.length > 0 || reinforcingFlowLoops.length > 0;
         const flowExpression = String(node.data?.expression ?? "").trim();
         let current = asNumber(stepState[node.id], asNumber(node.data?.bottleneck ?? node.data?.quantity ?? 0));
         if (isLoopControlledFlow) {
           const baseFallback = asNumber(node.data?.bottleneck ?? node.data?.quantity ?? 0);
           const baseFlowExpression = String(
-            node.data?.baseFlowExpression ?? flowLoops[0]?.baseFlowExpression ?? "",
+            node.data?.baseFlowExpression ??
+              balancingFlowLoops[0]?.baseFlowExpression ??
+              reinforcingFlowLoops[0]?.baseFlowExpression ??
+              "",
           ).trim();
           current = baseFallback;
           if (baseFlowExpression.length > 0) {
@@ -997,7 +1170,7 @@ export function LabPage(): JSX.Element {
           current = applyOperation(current, input, op);
         }
         if (isLoopControlledFlow) {
-          for (const loop of flowLoops) {
+          for (const loop of balancingFlowLoops) {
             const sourceGap = loopGapWithDelay(loop, stepState);
             loopDiscrepancyById.set(loop.id, sourceGap);
             const isActive = sourceGap > 1e-9;
@@ -1018,6 +1191,18 @@ export function LabPage(): JSX.Element {
             } else {
               current = applyOperation(current, correctiveInput, loop.operation as ControlOp);
             }
+          }
+          for (const loop of reinforcingFlowLoops) {
+            const delaySteps = loop.delayEnabled ? Math.max(0, Math.floor(asNumber(loop.delaySteps, 0))) : 0;
+            const delayedScope =
+              delaySteps > 0
+                ? stateHistory.length <= delaySteps
+                  ? null
+                  : stateHistory[stateHistory.length - 1 - delaySteps]
+                : stepState;
+            const multiplierValue = reinforcingMultiplierFromScope(loop, delayedScope);
+            current = loop.polarity === "negative" ? current - multiplierValue : current + multiplierValue;
+            if (loop.clampNonNegative) current = Math.max(0, current);
           }
         }
         flowBottleneckRaw[node.id] = Math.max(0, Number.isFinite(current) ? current : 0);
@@ -1106,6 +1291,7 @@ export function LabPage(): JSX.Element {
       }
       settledState = resolveExpressionNodes(settledState, flowEffectiveRate);
       for (const loop of feedbackLoops) {
+        if (loop.type !== "balancing") continue;
         const discrepancy = loopDiscrepancyById.get(loop.id) ?? loopGapWithDelay(loop, stepState);
         settledState[loop.discrepancyNodeId] = discrepancy;
         settledState[loop.correctiveNodeId] = loopCorrectiveById.get(loop.id) ?? 0;
@@ -1200,6 +1386,28 @@ export function LabPage(): JSX.Element {
     saveMutation.mutate();
   }
 
+  function createNewSystem(): void {
+    if (lockEditing) return;
+    const confirmed = window.confirm("Create a new system and discard current unsaved changes?");
+    if (!confirmed) return;
+    if (animationRef.current !== null) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    setIsPlaying(false);
+    setLockEditing(false);
+    resetToInitialGraph();
+    setActiveSystemId(null);
+    loadedSystemGraphIdRef.current = null;
+    setTitle("My dynamic system");
+    setCreateFeedbackLoopStockId(null);
+    setEditingFeedbackLoopId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSaveAttempted(false);
+    setLastSavedSignature(null);
+  }
+
   function commitStepsInput(): void {
     const parsed = parseNumericString(stepsInput);
     if (parsed === null) {
@@ -1243,7 +1451,7 @@ export function LabPage(): JSX.Element {
     if (!controlledFlow || !isFlowNode(controlledFlow)) {
       return { ok: false as const, error: "Selected controlled flow is not available." };
     }
-    if (editingFeedbackLoop) {
+    if (editingFeedbackLoop?.type === "balancing") {
       const correctivePosition = proposeCorrectivePosition(controlledFlow);
       const result = updateBalancingFeedbackLoop({
         id: editingFeedbackLoop.id,
@@ -1275,6 +1483,43 @@ export function LabPage(): JSX.Element {
       positions,
     });
     if (result.ok) setCreateFeedbackLoopStockId(null);
+    return result;
+  }
+
+  function createReinforcingLoopFromModal(payload: ReinforcingSubmitPayload) {
+    if (!activeFeedbackLoopStockNode) {
+      return { ok: false as const, error: "Selected stock is no longer available." };
+    }
+    const controlledFlow = nodesById.get(payload.controlledFlowId);
+    if (!controlledFlow || !isFlowNode(controlledFlow)) {
+      return { ok: false as const, error: "Selected controlled flow is not available." };
+    }
+    if (editingFeedbackLoop?.type === "reinforcing") {
+      const deleteResult = deleteBalancingFeedbackLoop(editingFeedbackLoop.id);
+      if (!deleteResult.ok) return deleteResult;
+    }
+    const positions = proposeReinforcingLoopPositions(
+      activeFeedbackLoopStockNode,
+      controlledFlow,
+      nodes,
+      payload.growthLimit !== undefined,
+    );
+    const result = createReinforcingFeedbackLoop({
+      stockId: activeFeedbackLoopStockNode.id,
+      controlledFlowId: payload.controlledFlowId,
+      k: payload.k,
+      polarity: payload.polarity,
+      delayEnabled: payload.delayEnabled,
+      delaySteps: payload.delaySteps,
+      growthLimit: payload.growthLimit,
+      clampNonNegative: payload.clampNonNegative,
+      multiplierLabel: payload.multiplierLabel,
+      positions,
+    });
+    if (result.ok) {
+      setCreateFeedbackLoopStockId(null);
+      setEditingFeedbackLoopId(null);
+    }
     return result;
   }
 
@@ -1324,8 +1569,12 @@ export function LabPage(): JSX.Element {
     if (lockEditing) return;
     const { nodeIds, edgeIds } = getEffectiveSelection();
     if (nodeIds.length === 0 && edgeIds.length === 0) return;
-    const nodeSet = new Set(nodeIds);
-    const edgeSet = new Set(edgeIds);
+    const nodeSet = new Set(
+      nodeIds.filter((id) => nodesById.get(id)?.data?.feedbackLoopPersistent !== true),
+    );
+    const edgeSet = new Set(
+      edgeIds.filter((id) => !edges.find((edge) => edge.id === id)?.data?.feedbackLoopPersistent),
+    );
     const nextNodes = nodes.filter((node) => !nodeSet.has(node.id));
     const nextEdges = edges.filter((edge) => !edgeSet.has(edge.id) && !nodeSet.has(edge.source) && !nodeSet.has(edge.target));
     skipHistoryPushRef.current = true;
@@ -1346,6 +1595,8 @@ export function LabPage(): JSX.Element {
 
   function deleteSingleNode(nodeId: string): void {
     if (lockEditing) return;
+    const node = nodesById.get(nodeId);
+    if (node?.data?.feedbackLoopPersistent === true) return;
     const nextNodes = nodes.filter((node) => node.id !== nodeId);
     const nextEdges = edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
     skipHistoryPushRef.current = true;
@@ -1661,30 +1912,32 @@ export function LabPage(): JSX.Element {
 
       </aside>
 
-      <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-right lab-system-panel">
-        <div className="lab-system-row">
-          <input
-            className="lab-input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="System title"
-            aria-label="System title"
-          />
-          <button
-            className={`lab-btn lab-btn-secondary ${saveDisabledNoChanges ? "lab-btn-save-idle" : ""}`}
-            onClick={handleSaveSystem}
-            disabled={saveButtonDisabled}
-            title={saveDisabledNoChanges ? "No changes to save" : "Save system"}
-          >
-            Save system
-          </button>
-        </div>
-        {saveAttempted && saveBlockedReason ? <div className="mt-2 text-xs lab-error">{saveBlockedReason}</div> : null}
-        {saveMutation.isError ? <div className="mt-2 text-xs lab-error">Unable to save system.</div> : null}
-      </aside>
-
       <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-right lab-floating-panel-editor space-y-4">
         <h3 className="lab-panel-title">Editor</h3>
+        <div className="space-y-2">
+          <div className="lab-system-row">
+            <input
+              className="lab-input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="System title"
+              aria-label="System title"
+            />
+            <button
+              className={`lab-btn lab-btn-secondary ${saveDisabledNoChanges ? "lab-btn-save-idle" : ""}`}
+              onClick={handleSaveSystem}
+              disabled={saveButtonDisabled}
+              title={saveDisabledNoChanges ? "No changes to save" : "Save system"}
+            >
+              Save system
+            </button>
+          </div>
+          <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={createNewSystem} disabled={lockEditing}>
+            Create new system
+          </button>
+          {saveAttempted && saveBlockedReason ? <div className="text-xs lab-error">{saveBlockedReason}</div> : null}
+          {saveMutation.isError ? <div className="text-xs lab-error">Unable to save system.</div> : null}
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <button className="lab-btn lab-btn-secondary flex-1" onClick={addStock} disabled={lockEditing}>+ Stock</button>
           <button className="lab-btn lab-btn-secondary flex-1" onClick={addFlow} disabled={lockEditing}>+ Flow</button>
@@ -1858,10 +2111,11 @@ export function LabPage(): JSX.Element {
               {feedbackLoopList.map((loop) => (
                 <div key={loop.id} className="lab-loop-item">
                   <div className="lab-loop-item-meta">
-                    <div className="lab-loop-item-title">{loop.correctiveLabel}</div>
+                    <div className="lab-loop-item-title">{loop.loopLabel}</div>
                     <div className="lab-loop-item-sub">
-                      {loop.stockLabel} {"->"} {loop.flowLabel} ({loop.operation}) | t={loop.adjustmentTime}
-                      {loop.delayEnabled ? ` | delay=${loop.delaySteps}` : ""}
+                      {loop.type === "balancing"
+                        ? `${loop.stockLabel} -> ${loop.flowLabel} (${loop.operation}) | t=${loop.adjustmentTime}${loop.delayEnabled ? ` | delay=${loop.delaySteps}` : ""}`
+                        : `${loop.stockLabel} -> ${loop.flowLabel} (${loop.polarity}) | k=${loop.k}${loop.delayEnabled ? ` | delay=${loop.delaySteps}` : ""}${loop.growthLimitNodeId ? " | growth limit" : ""}${loop.clampNonNegative ? " | clamp>=0" : ""}`}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1931,7 +2185,9 @@ export function LabPage(): JSX.Element {
       <FeedbackLoopModal
         isOpen={activeFeedbackLoopStockNode !== null}
         mode={editingFeedbackLoop ? "edit" : "create"}
-        initialValues={feedbackLoopModalInitialValues}
+        initialTab={feedbackLoopModalInitialTab}
+        initialBalancingValues={feedbackLoopModalInitialBalancingValues}
+        initialReinforcingValues={feedbackLoopModalInitialReinforcingValues}
         stockLabel={String(activeFeedbackLoopStockNode?.data?.label ?? activeFeedbackLoopStockNode?.id ?? "Stock")}
         connectedFlows={feedbackLoopFlowOptions}
         onClose={() => {
@@ -1939,6 +2195,7 @@ export function LabPage(): JSX.Element {
           setEditingFeedbackLoopId(null);
         }}
         onSubmitBalancingLoop={createBalancingLoopFromModal}
+        onSubmitReinforcingLoop={createReinforcingLoopFromModal}
       />
       {isChartModalOpen ? (
         <div className="lab-modal-overlay" onClick={() => setIsChartModalOpen(false)}>

@@ -749,8 +749,8 @@ body {
 }
 
 .lab-floating-panel-editor {
-  top: 98px;
-  max-height: calc(100% - 114px);
+  top: 16px;
+  max-height: calc(100% - 32px);
   overflow-y: auto;
 }
 
@@ -1278,6 +1278,44 @@ body {
   min-width: auto;
 }
 
+.lab-variable-node-text-only {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.lab-variable-node-text-only .lab-line-node-label,
+.lab-variable-node-text-only .lab-line-node-value {
+  color: #e5e7eb;
+}
+
+.lab-reinforcing-marker-node {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  pointer-events: none;
+}
+
+.lab-reinforcing-marker-label {
+  color: #f5f5f5;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.lab-reinforcing-collapsed-node .react-flow__handle {
+  opacity: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
 .lab-variable-discrepancy-positive .lab-line-node-label,
 .lab-variable-discrepancy-positive .lab-line-node-value {
   color: #22c55e;
@@ -1419,6 +1457,14 @@ body {
 
 .lab-reactflow .react-flow__edge.lab-edge-control-mod .react-flow__edge-path {
   stroke: #f97316 !important;
+}
+
+.lab-reactflow .react-flow__edge.lab-edge-reinforcing-positive .react-flow__edge-path {
+  stroke: #22c55e !important;
+}
+
+.lab-reactflow .react-flow__edge.lab-edge-reinforcing-negative .react-flow__edge-path {
+  stroke: #ef4444 !important;
 }
 
 .lab-reactflow .react-flow__edge.lab-edge-inflow .react-flow__edge-text {
@@ -2452,6 +2498,20 @@ html[data-theme="light"] .lab-line-node-value {
   color: #4b5563 !important;
 }
 
+html[data-theme="light"] .lab-variable-node-text-only .lab-line-node-label,
+html[data-theme="light"] .lab-variable-node-text-only .lab-line-node-value {
+  color: #111111 !important;
+}
+
+html[data-theme="light"] .lab-reinforcing-marker-node {
+  background: transparent;
+  border: 0;
+}
+
+html[data-theme="light"] .lab-reinforcing-marker-label {
+  color: #111111;
+}
+
 html[data-theme="light"] .lab-stock-palette {
   background: #ffffff !important;
 }
@@ -2698,6 +2758,14 @@ html[data-theme="light"] .lab-reactflow .react-flow__edge.lab-edge-control-pow .
 
 html[data-theme="light"] .lab-reactflow .react-flow__edge.lab-edge-control-mod .react-flow__edge-path {
   stroke: #f97316 !important;
+}
+
+html[data-theme="light"] .lab-reactflow .react-flow__edge.lab-edge-reinforcing-positive .react-flow__edge-path {
+  stroke: #22c55e !important;
+}
+
+html[data-theme="light"] .lab-reactflow .react-flow__edge.lab-edge-reinforcing-negative .react-flow__edge-path {
+  stroke: #ef4444 !important;
 }
 
 html[data-theme="light"] .lab-reactflow .react-flow__edge.lab-edge-inflow .react-flow__edge-text {

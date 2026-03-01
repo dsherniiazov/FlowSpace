@@ -3,6 +3,7 @@ import {
   BoundaryType,
   CreateBalancingFeedbackLoopResult,
   LoopOperation,
+  ReinforcingPolarity,
 } from "../store/labStore";
 
 export type ConnectedFlowOption = {
@@ -22,14 +23,28 @@ export type BalancingSubmitPayload = {
   correctiveLabel?: string;
 };
 
+export type ReinforcingSubmitPayload = {
+  k: number;
+  controlledFlowId: string;
+  polarity: ReinforcingPolarity;
+  delayEnabled: boolean;
+  delaySteps: number;
+  growthLimit?: number;
+  clampNonNegative: boolean;
+  multiplierLabel?: string;
+};
+
 type FeedbackLoopModalProps = {
   isOpen: boolean;
   stockLabel: string;
   connectedFlows: ConnectedFlowOption[];
   mode?: "create" | "edit";
-  initialValues?: Partial<BalancingSubmitPayload>;
+  initialTab?: "balancing" | "reinforcing";
+  initialBalancingValues?: Partial<BalancingSubmitPayload>;
+  initialReinforcingValues?: Partial<ReinforcingSubmitPayload>;
   onClose: () => void;
   onSubmitBalancingLoop: (payload: BalancingSubmitPayload) => CreateBalancingFeedbackLoopResult;
+  onSubmitReinforcingLoop: (payload: ReinforcingSubmitPayload) => CreateBalancingFeedbackLoopResult;
 };
 
 function parseNumericInput(value: string): number | null {
@@ -48,9 +63,12 @@ export function FeedbackLoopModal({
   stockLabel,
   connectedFlows,
   mode = "create",
-  initialValues,
+  initialTab,
+  initialBalancingValues,
+  initialReinforcingValues,
   onClose,
   onSubmitBalancingLoop,
+  onSubmitReinforcingLoop,
 }: FeedbackLoopModalProps): JSX.Element | null {
   const [activeTab, setActiveTab] = useState<"balancing" | "reinforcing">("balancing");
   const [boundaryType, setBoundaryType] = useState<BoundaryType>("upper");
@@ -61,23 +79,41 @@ export function FeedbackLoopModal({
   const [delayEnabled, setDelayEnabled] = useState(false);
   const [delayStepsInput, setDelayStepsInput] = useState("1");
   const [correctiveLabel, setCorrectiveLabel] = useState("");
+  const [kInput, setKInput] = useState("1");
+  const [reinforcingFlowId, setReinforcingFlowId] = useState("");
+  const [polarity, setPolarity] = useState<ReinforcingPolarity>("positive");
+  const [reinforcingDelayEnabled, setReinforcingDelayEnabled] = useState(false);
+  const [reinforcingDelayStepsInput, setReinforcingDelayStepsInput] = useState("1");
+  const [growthLimitInput, setGrowthLimitInput] = useState("");
+  const [clampNonNegative, setClampNonNegative] = useState(true);
+  const [multiplierLabel, setMultiplierLabel] = useState("Multiplier");
   const [error, setError] = useState<string | null>(null);
 
   const hasConnectedFlow = connectedFlows.length > 0;
 
   useEffect(() => {
     if (!isOpen) return;
-    setActiveTab("balancing");
-    setBoundaryType(initialValues?.boundaryType ?? "upper");
-    setGoalValueInput(String(initialValues?.goalValue ?? 0));
-    setAdjustmentTimeInput(String(initialValues?.adjustmentTime ?? 1));
-    setControlledFlowId(initialValues?.controlledFlowId ?? connectedFlows[0]?.id ?? "");
-    setOperation(sanitizeOperation(initialValues?.operation));
-    setDelayEnabled(initialValues?.delayEnabled === true);
-    setDelayStepsInput(String(initialValues?.delaySteps ?? 1));
-    setCorrectiveLabel(initialValues?.correctiveLabel ?? "");
+    setActiveTab(initialTab ?? "balancing");
+    setBoundaryType(initialBalancingValues?.boundaryType ?? "upper");
+    setGoalValueInput(String(initialBalancingValues?.goalValue ?? 0));
+    setAdjustmentTimeInput(String(initialBalancingValues?.adjustmentTime ?? 1));
+    setControlledFlowId(initialBalancingValues?.controlledFlowId ?? connectedFlows[0]?.id ?? "");
+    setOperation(sanitizeOperation(initialBalancingValues?.operation));
+    setDelayEnabled(initialBalancingValues?.delayEnabled === true);
+    setDelayStepsInput(String(initialBalancingValues?.delaySteps ?? 1));
+    setCorrectiveLabel(initialBalancingValues?.correctiveLabel ?? "");
+    setKInput(String(initialReinforcingValues?.k ?? 1));
+    setReinforcingFlowId(initialReinforcingValues?.controlledFlowId ?? connectedFlows[0]?.id ?? "");
+    setPolarity(initialReinforcingValues?.polarity ?? "positive");
+    setReinforcingDelayEnabled(initialReinforcingValues?.delayEnabled === true);
+    setReinforcingDelayStepsInput(String(initialReinforcingValues?.delaySteps ?? 1));
+    setGrowthLimitInput(
+      initialReinforcingValues?.growthLimit === undefined ? "" : String(initialReinforcingValues.growthLimit),
+    );
+    setClampNonNegative(initialReinforcingValues?.clampNonNegative !== false);
+    setMultiplierLabel(initialReinforcingValues?.multiplierLabel ?? "Multiplier");
     setError(null);
-  }, [isOpen, connectedFlows, initialValues]);
+  }, [isOpen, connectedFlows, initialTab, initialBalancingValues, initialReinforcingValues]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -95,7 +131,10 @@ export function FeedbackLoopModal({
     if (!controlledFlowId || !connectedFlowLookup.has(controlledFlowId)) {
       setControlledFlowId(connectedFlows[0]?.id ?? "");
     }
-  }, [isOpen, controlledFlowId, connectedFlows, connectedFlowLookup]);
+    if (!reinforcingFlowId || !connectedFlowLookup.has(reinforcingFlowId)) {
+      setReinforcingFlowId(connectedFlows[0]?.id ?? "");
+    }
+  }, [isOpen, controlledFlowId, reinforcingFlowId, connectedFlows, connectedFlowLookup]);
 
   if (!isOpen) return null;
 
@@ -108,40 +147,73 @@ export function FeedbackLoopModal({
       return;
     }
 
-    const goalValue = parseNumericInput(goalValueInput);
-    if (goalValue === null) {
-      setError("Goal value must be a valid number.");
-      return;
-    }
+    let result: CreateBalancingFeedbackLoopResult;
+    if (activeTab === "balancing") {
+      const goalValue = parseNumericInput(goalValueInput);
+      if (goalValue === null) {
+        setError("Goal value must be a valid number.");
+        return;
+      }
 
-    const adjustmentTime = parseNumericInput(adjustmentTimeInput);
-    if (adjustmentTime === null || adjustmentTime <= 0) {
-      setError("Adjustment time must be a number greater than 0.");
-      return;
-    }
+      const adjustmentTime = parseNumericInput(adjustmentTimeInput);
+      if (adjustmentTime === null || adjustmentTime <= 0) {
+        setError("Adjustment time must be a number greater than 0.");
+        return;
+      }
 
-    if (!controlledFlowId) {
-      setError("Select a controlled flow.");
-      return;
-    }
+      if (!controlledFlowId) {
+        setError("Select a controlled flow.");
+        return;
+      }
 
-    const delayStepsParsed = parseNumericInput(delayStepsInput);
-    if (delayEnabled && (delayStepsParsed === null || delayStepsParsed < 1)) {
-      setError("Delay steps must be an integer greater than or equal to 1.");
-      return;
-    }
-    const delaySteps = Math.max(1, Math.floor(delayStepsParsed ?? 1));
+      const delayStepsParsed = parseNumericInput(delayStepsInput);
+      if (delayEnabled && (delayStepsParsed === null || delayStepsParsed < 1)) {
+        setError("Delay steps must be an integer greater than or equal to 1.");
+        return;
+      }
+      const delaySteps = Math.max(1, Math.floor(delayStepsParsed ?? 1));
 
-    const result = onSubmitBalancingLoop({
-      boundaryType,
-      goalValue,
-      adjustmentTime,
-      controlledFlowId,
-      operation,
-      delayEnabled,
-      delaySteps: delayEnabled ? delaySteps : 0,
-      correctiveLabel: correctiveLabel.trim() || undefined,
-    });
+      result = onSubmitBalancingLoop({
+        boundaryType,
+        goalValue,
+        adjustmentTime,
+        controlledFlowId,
+        operation,
+        delayEnabled,
+        delaySteps: delayEnabled ? delaySteps : 0,
+        correctiveLabel: correctiveLabel.trim() || undefined,
+      });
+    } else {
+      const k = parseNumericInput(kInput);
+      if (k === null) {
+        setError("Multiplier coefficient k must be a valid number.");
+        return;
+      }
+      if (!reinforcingFlowId) {
+        setError("Select a controlled flow.");
+        return;
+      }
+      const growthLimitParsed = parseNumericInput(growthLimitInput);
+      if (growthLimitInput.trim().length > 0 && growthLimitParsed === null) {
+        setError("Growth limit must be a valid number.");
+        return;
+      }
+      const delayStepsParsed = parseNumericInput(reinforcingDelayStepsInput);
+      if (reinforcingDelayEnabled && (delayStepsParsed === null || delayStepsParsed < 1)) {
+        setError("Delay steps must be an integer greater than or equal to 1.");
+        return;
+      }
+      result = onSubmitReinforcingLoop({
+        k,
+        controlledFlowId: reinforcingFlowId,
+        polarity,
+        delayEnabled: reinforcingDelayEnabled,
+        delaySteps: reinforcingDelayEnabled ? Math.max(1, Math.floor(delayStepsParsed ?? 1)) : 0,
+        growthLimit: growthLimitInput.trim().length > 0 ? growthLimitParsed ?? undefined : undefined,
+        clampNonNegative,
+        multiplierLabel: multiplierLabel.trim() || undefined,
+      });
+    }
 
     if (!result.ok) {
       setError(result.error);
@@ -171,6 +243,7 @@ export function FeedbackLoopModal({
             onClick={() => setActiveTab("balancing")}
             role="tab"
             aria-selected={activeTab === "balancing"}
+            disabled={mode === "edit"}
           >
             Balancing Loop
           </button>
@@ -180,7 +253,7 @@ export function FeedbackLoopModal({
             onClick={() => setActiveTab("reinforcing")}
             role="tab"
             aria-selected={activeTab === "reinforcing"}
-            disabled
+            disabled={mode === "edit"}
           >
             Reinforcing Loop
           </button>
@@ -289,9 +362,109 @@ export function FeedbackLoopModal({
             </div>
           </form>
         ) : (
-          <div className="lab-loop-empty">
-            Reinforcing loop UI is reserved for the next iteration.
-          </div>
+          <form className="lab-loop-form" onSubmit={onSubmit}>
+            <label className="lab-field text-sm">
+              Multiplier coefficient k
+              <input
+                className="lab-input mt-1"
+                type="text"
+                inputMode="decimal"
+                value={kInput}
+                onChange={(e) => setKInput(e.target.value)}
+                placeholder="e.g. 1"
+              />
+            </label>
+
+            <label className="lab-field text-sm">
+              Controlled flow
+              <select
+                className="lab-input mt-1"
+                value={reinforcingFlowId}
+                onChange={(e) => setReinforcingFlowId(e.target.value)}
+                disabled={!hasConnectedFlow}
+              >
+                {connectedFlows.map((flow) => (
+                  <option key={flow.id} value={flow.id}>
+                    {flow.label} ({flow.direction})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="lab-field text-sm">
+              Polarity
+              <select className="lab-input mt-1" value={polarity} onChange={(e) => setPolarity(e.target.value as ReinforcingPolarity)}>
+                <option value="positive">Positive (reinforcing growth)</option>
+                <option value="negative">Negative (self-dampening)</option>
+              </select>
+            </label>
+
+            <label className="lab-field text-sm">
+              Growth limit (optional)
+              <input
+                className="lab-input mt-1"
+                type="text"
+                inputMode="decimal"
+                value={growthLimitInput}
+                onChange={(e) => setGrowthLimitInput(e.target.value)}
+                placeholder="Leave empty for unlimited growth"
+              />
+            </label>
+
+            <label className="lab-field text-sm">
+              Multiplier label
+              <input
+                className="lab-input mt-1"
+                type="text"
+                value={multiplierLabel}
+                onChange={(e) => setMultiplierLabel(e.target.value)}
+                placeholder="Multiplier"
+              />
+            </label>
+
+            <div className="lab-loop-toggle">
+              <label className="lab-loop-toggle">
+                <input
+                  type="checkbox"
+                  checked={reinforcingDelayEnabled}
+                  onChange={(e) => setReinforcingDelayEnabled(e.target.checked)}
+                />
+                <span>Enable delay</span>
+              </label>
+              {reinforcingDelayEnabled ? (
+                <label className="lab-field text-sm w-full">
+                  Delay (steps)
+                  <input
+                    className="lab-input mt-1"
+                    type="text"
+                    inputMode="numeric"
+                    value={reinforcingDelayStepsInput}
+                    onChange={(e) => setReinforcingDelayStepsInput(e.target.value)}
+                    placeholder="e.g. 3"
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            <div className="lab-loop-toggle">
+              <label className="lab-loop-toggle">
+                <input
+                  type="checkbox"
+                  checked={clampNonNegative}
+                  onChange={(e) => setClampNonNegative(e.target.checked)}
+                />
+                <span>Clamp flow to &gt;= 0</span>
+              </label>
+            </div>
+
+            {error ? <div className="lab-error text-xs">{error}</div> : null}
+
+            <div className="lab-loop-actions">
+              <button className="lab-btn lab-btn-primary" type="submit" disabled={!hasConnectedFlow}>
+                {mode === "edit" ? "Save Changes" : "Create Reinforcing Loop"}
+              </button>
+            </div>
+          </form>
         )}
       </div>
     </div>

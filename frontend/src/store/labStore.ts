@@ -33,6 +33,26 @@ export type BalancingFeedbackLoop = {
   edgeIds: string[];
 };
 
+export type ReinforcingPolarity = "positive" | "negative";
+
+export type ReinforcingFeedbackLoop = {
+  id: string;
+  type: "reinforcing";
+  stockId: string;
+  multiplierNodeId: string;
+  growthLimitNodeId?: string;
+  controlledFlowId: string;
+  k: number;
+  polarity: ReinforcingPolarity;
+  delayEnabled: boolean;
+  delaySteps: number;
+  clampNonNegative: boolean;
+  baseFlowExpression: string;
+  edgeIds: string[];
+};
+
+export type FeedbackLoop = BalancingFeedbackLoop | ReinforcingFeedbackLoop;
+
 export type CreateBalancingFeedbackLoopPayload = {
   stockId: string;
   controlledFlowId: string;
@@ -48,6 +68,23 @@ export type CreateBalancingFeedbackLoopPayload = {
     goal: { x: number; y: number };
     discrepancy: { x: number; y: number };
     corrective: { x: number; y: number };
+  };
+};
+
+export type CreateReinforcingFeedbackLoopPayload = {
+  stockId: string;
+  controlledFlowId: string;
+  k: number;
+  polarity: ReinforcingPolarity;
+  delayEnabled: boolean;
+  delaySteps: number;
+  growthLimit?: number;
+  clampNonNegative: boolean;
+  multiplierLabel?: string;
+  positions: {
+    multiplier: { x: number; y: number };
+    growthLimit?: { x: number; y: number };
+    marker: { x: number; y: number };
   };
 };
 
@@ -71,7 +108,7 @@ export type CreateBalancingFeedbackLoopResult =
 type LabState = {
   nodes: Node[];
   edges: Edge[];
-  feedbackLoops: BalancingFeedbackLoop[];
+  feedbackLoops: FeedbackLoop[];
   activeSystemId: number | null;
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -99,10 +136,12 @@ type LabState = {
   addConstant: () => void;
   addVariable: () => void;
   createBalancingFeedbackLoop: (payload: CreateBalancingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
+  createReinforcingFeedbackLoop: (payload: CreateReinforcingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
   updateBalancingFeedbackLoop: (payload: UpdateBalancingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
   deleteBalancingFeedbackLoop: (id: string) => CreateBalancingFeedbackLoopResult;
   setSimulationSteps: (steps: RunStep[]) => void;
   clearSimulation: () => void;
+  resetToInitialGraph: () => void;
   replaceGraph: (nodes: Node[], edges: Edge[]) => void;
   toGraphJson: () => Record<string, unknown>;
   loadGraphJson: (graph: Record<string, unknown>) => void;
@@ -219,16 +258,21 @@ function clampFlowNonNegative(value: unknown): number {
   return Math.max(0, asFiniteNumber(value, 0));
 }
 
-function sanitizeLoopCollection(loops: BalancingFeedbackLoop[], nodes: Node[], edges: Edge[]): BalancingFeedbackLoop[] {
+function sanitizeLoopCollection(loops: FeedbackLoop[], nodes: Node[], edges: Edge[]): FeedbackLoop[] {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edgeIds = new Set(edges.map((edge) => edge.id));
   return loops.filter((loop) => {
     const hasNodes =
-      nodeIds.has(loop.stockId) &&
-      nodeIds.has(loop.controlledFlowId) &&
-      nodeIds.has(loop.goalNodeId) &&
-      nodeIds.has(loop.discrepancyNodeId) &&
-      nodeIds.has(loop.correctiveNodeId);
+      loop.type === "balancing"
+        ? nodeIds.has(loop.stockId) &&
+          nodeIds.has(loop.controlledFlowId) &&
+          nodeIds.has(loop.goalNodeId) &&
+          nodeIds.has(loop.discrepancyNodeId) &&
+          nodeIds.has(loop.correctiveNodeId)
+        : nodeIds.has(loop.stockId) &&
+          nodeIds.has(loop.controlledFlowId) &&
+          nodeIds.has(loop.multiplierNodeId) &&
+          (!loop.growthLimitNodeId || nodeIds.has(loop.growthLimitNodeId));
     if (!hasNodes) return false;
     return loop.edgeIds.every((id) => edgeIds.has(id));
   });
@@ -271,20 +315,73 @@ function flowExpression(baseFlowExpression: string, correctiveNodeId: string, op
   return `max(0, ${expression})`;
 }
 
-function parseLoopRecord(item: Record<string, unknown>): BalancingFeedbackLoop | null {
+function sanitizeReinforcingPolarity(value: unknown): ReinforcingPolarity {
+  return value === "negative" ? "negative" : "positive";
+}
+
+function reinforcingFlowExpression(
+  baseFlowExpression: string,
+  multiplierNodeId: string,
+  polarity: ReinforcingPolarity,
+  clampNonNegative: boolean,
+): string {
+  const expression =
+    polarity === "negative"
+      ? `(${baseFlowExpression}) - (${multiplierNodeId})`
+      : `(${baseFlowExpression}) + (${multiplierNodeId})`;
+  return clampNonNegative ? `max(0, ${expression})` : expression;
+}
+
+function rebuildFlowExpression(
+  baseFlowExpression: string,
+  loopsForFlow: FeedbackLoop[],
+): string {
+  let expression = baseFlowExpression;
+  for (const loop of loopsForFlow) {
+    if (loop.type === "balancing") {
+      expression = flowExpression(expression, loop.correctiveNodeId, loop.operation);
+    } else {
+      expression = reinforcingFlowExpression(expression, loop.multiplierNodeId, loop.polarity, loop.clampNonNegative);
+    }
+  }
+  return expression;
+}
+
+function parseLoopRecord(item: Record<string, unknown>): FeedbackLoop | null {
   const id = String(item.id ?? "").trim();
   const type = String(item.type ?? "").trim();
   const stockId = String(item.stockId ?? "").trim();
-  const goalNodeId = String(item.goalNodeId ?? "").trim();
-  const discrepancyNodeId = String(item.discrepancyNodeId ?? "").trim();
-  const correctiveNodeId = String(item.correctiveNodeId ?? "").trim();
   const controlledFlowId = String(item.controlledFlowId ?? "").trim();
-  if (!id || type !== "balancing" || !stockId || !goalNodeId || !discrepancyNodeId || !correctiveNodeId || !controlledFlowId) {
+  if (!id || !stockId || !controlledFlowId) {
     return null;
   }
   const edgeIds = Array.isArray(item.edgeIds)
     ? item.edgeIds.map((edgeId) => String(edgeId)).filter((edgeId) => edgeId.trim().length > 0)
     : [];
+  if (type === "reinforcing") {
+    const multiplierNodeId = String(item.multiplierNodeId ?? "").trim();
+    if (!multiplierNodeId) return null;
+    const growthLimitNodeId = String(item.growthLimitNodeId ?? "").trim();
+    return {
+      id,
+      type: "reinforcing",
+      stockId,
+      multiplierNodeId,
+      growthLimitNodeId: growthLimitNodeId || undefined,
+      controlledFlowId,
+      k: asFiniteNumber(item.k, 1),
+      polarity: sanitizeReinforcingPolarity(item.polarity),
+      delayEnabled: item.delayEnabled === true || item.delay_enabled === true,
+      delaySteps: Math.max(0, Math.floor(asFiniteNumber(item.delaySteps ?? item.delay_steps, 0))),
+      clampNonNegative: item.clampNonNegative !== false && item.clamp_non_negative !== false,
+      baseFlowExpression: String(item.baseFlowExpression ?? item.base_flow_expression ?? "0") || "0",
+      edgeIds,
+    };
+  }
+  const goalNodeId = String(item.goalNodeId ?? "").trim();
+  const discrepancyNodeId = String(item.discrepancyNodeId ?? "").trim();
+  const correctiveNodeId = String(item.correctiveNodeId ?? "").trim();
+  if (type !== "balancing" || !goalNodeId || !discrepancyNodeId || !correctiveNodeId) return null;
   return {
     id,
     type: "balancing",
@@ -353,7 +450,22 @@ export const useLabStore = create<LabState>((set, get) => ({
 
   onNodesChange: (changes) => {
     if (get().lockEditing) return;
-    const nextNodes = applyNodeChanges(changes, get().nodes);
+    const currentNodes = get().nodes;
+    const protectedNodeIds = new Set(
+      currentNodes
+        .filter((node) => node.data?.feedbackLoopPersistent === true)
+        .map((node) => node.id),
+    );
+    const filteredChanges = changes.filter((change) => {
+      if (!("id" in change)) return true;
+      if (!protectedNodeIds.has(change.id)) return true;
+      if (change.type === "remove") return false;
+      if (change.type === "dimensions" || change.type === "position" || change.type === "select") return true;
+      return false;
+    });
+    const nextNodes = applyNodeChanges(filteredChanges, currentNodes).map((node) =>
+      node.data?.feedbackLoopPersistent === true ? { ...node, hidden: false } : node,
+    );
     set({
       nodes: nextNodes,
       feedbackLoops: sanitizeLoopCollection(get().feedbackLoops, nextNodes, get().edges),
@@ -361,7 +473,20 @@ export const useLabStore = create<LabState>((set, get) => ({
   },
   onEdgesChange: (changes) => {
     if (get().lockEditing) return;
-    const nextEdges = applyEdgeChanges(changes, get().edges);
+    const currentEdges = get().edges;
+    const protectedEdgeIds = new Set(
+      currentEdges
+        .filter((edge) => edge.data?.feedbackLoopPersistent === true)
+        .map((edge) => edge.id),
+    );
+    const filteredChanges = changes.filter((change) => {
+      if (!("id" in change)) return true;
+      if (!protectedEdgeIds.has(change.id)) return true;
+      return change.type !== "remove";
+    });
+    const nextEdges = applyEdgeChanges(filteredChanges, currentEdges).map((edge) =>
+      edge.data?.feedbackLoopPersistent === true ? { ...edge, hidden: false } : edge,
+    );
     const selectedEdgeId = get().selectedEdgeId;
     set({
       edges: nextEdges,
@@ -399,19 +524,47 @@ export const useLabStore = create<LabState>((set, get) => ({
     if (get().lockEditing) return;
     const selectedNodeId = get().selectedNodeId;
     if (!selectedNodeId) return;
-    set({
-      nodes: get().nodes.map((node) => {
+    set((state) => {
+      let nextFeedbackLoops = state.feedbackLoops;
+      const nextNodes = state.nodes.map((node) => {
         if (node.id !== selectedNodeId) return node;
         const nextData = { ...node.data, ...patch };
         if (nodeKind(node) === "flow") {
           if (nextData.bottleneck !== undefined) nextData.bottleneck = clampFlowNonNegative(nextData.bottleneck);
           if (nextData.quantity !== undefined) nextData.quantity = clampFlowNonNegative(nextData.quantity);
+
+          const flowLoops = state.feedbackLoops.filter((loop) => loop.controlledFlowId === node.id);
+          const hasFlowInputPatch =
+            Object.prototype.hasOwnProperty.call(patch, "bottleneck") ||
+            Object.prototype.hasOwnProperty.call(patch, "quantity");
+          if (flowLoops.length > 0 && hasFlowInputPatch) {
+            const baseValue = clampFlowNonNegative(
+              nextData.bottleneck ?? nextData.quantity ?? node.data?.bottleneck ?? node.data?.quantity ?? 0,
+            );
+            const nextBaseFlowExpression = String(baseValue);
+            nextFeedbackLoops = state.feedbackLoops.map((loop) =>
+              loop.controlledFlowId === node.id
+                ? {
+                    ...loop,
+                    baseFlowExpression: nextBaseFlowExpression,
+                  }
+                : loop,
+            );
+            const loopsForFlow = nextFeedbackLoops.filter((loop) => loop.controlledFlowId === node.id);
+            nextData.baseFlowExpression = nextBaseFlowExpression;
+            nextData.expression = rebuildFlowExpression(nextBaseFlowExpression, loopsForFlow);
+          }
         }
         return {
           ...node,
           data: nextData,
         };
-      }),
+      });
+
+      return {
+        nodes: nextNodes,
+        feedbackLoops: nextFeedbackLoops,
+      };
     });
   },
   updateSelectedEdge: (patch) => {
@@ -557,7 +710,30 @@ export const useLabStore = create<LabState>((set, get) => ({
       flowNode?.data?.baseFlowExpression ?? flowNode?.data?.expression ?? flowNode?.data?.bottleneck ?? flowNode?.data?.quantity ?? 0,
     ).trim() || "0";
 
-    const nextFlowExpression = flowExpression(baseFlowExpression, correctiveNodeId, payload.operation);
+    const nextFlowExpression = rebuildFlowExpression(
+      baseFlowExpression,
+      [
+        ...currentLoops.filter((item) => item.controlledFlowId === payload.controlledFlowId),
+        {
+          id: "__preview_balancing_loop__",
+          type: "balancing",
+          stockId: payload.stockId,
+          goalNodeId,
+          discrepancyNodeId,
+          correctiveNodeId,
+          controlledFlowId: payload.controlledFlowId,
+          boundaryType: payload.boundaryType,
+          goalValue: asFiniteNumber(payload.goalValue, 0),
+          adjustmentTime,
+          operation: payload.operation,
+          delayEnabled,
+          delaySteps,
+          clampNonNegative: true,
+          baseFlowExpression,
+          edgeIds: [],
+        } satisfies BalancingFeedbackLoop,
+      ],
+    );
 
     const goalNode: Node = {
       id: goalNodeId,
@@ -695,11 +871,231 @@ export const useLabStore = create<LabState>((set, get) => ({
     return { ok: true, loopId };
   },
 
+  createReinforcingFeedbackLoop: (payload) => {
+    if (get().lockEditing) return { ok: false, error: "Editing is locked while simulation is running." };
+
+    const currentNodes = get().nodes;
+    const currentEdges = get().edges;
+    const currentLoops = get().feedbackLoops;
+    const stockNode = currentNodes.find((node) => node.id === payload.stockId);
+    const flowNode = currentNodes.find((node) => node.id === payload.controlledFlowId);
+
+    if (nodeKind(stockNode) !== "stock") return { ok: false, error: "Selected stock was not found." };
+    if (nodeKind(flowNode) !== "flow") return { ok: false, error: "Selected controlled flow was not found." };
+
+    const loopId = `loop_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const k = asFiniteNumber(payload.k, 1);
+    const multiplierLabel = (payload.multiplierLabel ?? "").trim() || "Multiplier";
+    const collapseMultiplier = Math.abs(k - 1) <= 1e-9 && multiplierLabel === "Multiplier";
+    const delayEnabled = payload.delayEnabled === true;
+    const delaySteps = Math.max(0, Math.floor(asFiniteNumber(payload.delaySteps, 0)));
+    const clampNonNegative = payload.clampNonNegative !== false;
+    const polarity: ReinforcingPolarity = payload.polarity === "negative" ? "negative" : "positive";
+    const multiplierNodeId = nextNodeId(currentNodes, "variable");
+    const withMultiplierNode: Node[] = [
+      ...currentNodes,
+      { id: multiplierNodeId, type: "variableNode", position: { x: 0, y: 0 }, data: {} },
+    ];
+    const growthLimitNodeId =
+      payload.growthLimit === undefined ? undefined : nextNodeId(withMultiplierNode, "constant");
+    const markerNodeId = `loop_marker_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+
+    const baseFlowExpression = String(
+      flowNode?.data?.baseFlowExpression ?? flowNode?.data?.expression ?? flowNode?.data?.bottleneck ?? flowNode?.data?.quantity ?? 0,
+    ).trim() || "0";
+
+    const multiplierExpression =
+      growthLimitNodeId === undefined
+        ? `(${k}) * (${payload.stockId})`
+        : `(${k}) * (${payload.stockId}) * max(0, (${growthLimitNodeId}) - (${payload.stockId}))`;
+
+    const multiplierNode: Node = {
+      id: multiplierNodeId,
+      type: "variableNode",
+      position: { x: payload.positions.multiplier.x, y: payload.positions.multiplier.y },
+      data: {
+        label: collapseMultiplier ? "(R)" : multiplierLabel,
+        quantity: 0,
+        unit: "",
+        expression: multiplierExpression,
+        reinforcingK: k,
+        reinforcingCollapsed: collapseMultiplier,
+        loopId,
+        loopRole: "reinforcingMultiplier",
+        feedbackLoopType: "reinforcing",
+        feedbackLoopPersistent: true,
+        reinforcingTextOnly: !collapseMultiplier,
+      },
+    };
+
+    const growthLimitNode: Node | null =
+      growthLimitNodeId === undefined
+        ? null
+        : {
+            id: growthLimitNodeId,
+            type: "constantNode",
+            position: {
+              x: payload.positions.growthLimit?.x ?? payload.positions.multiplier.x,
+              y: payload.positions.growthLimit?.y ?? payload.positions.multiplier.y - 72,
+            },
+            data: {
+              label: "GrowthLimit",
+              quantity: asFiniteNumber(payload.growthLimit, 0),
+              unit: "",
+              expression: String(asFiniteNumber(payload.growthLimit, 0)),
+              loopId,
+              loopRole: "growthLimit",
+              feedbackLoopType: "reinforcing",
+              feedbackLoopPersistent: true,
+            },
+          };
+
+    const markerNode: Node | null = collapseMultiplier
+      ? null
+      : {
+          id: markerNodeId,
+          type: "variableNode",
+          position: { x: payload.positions.marker.x, y: payload.positions.marker.y },
+          draggable: false,
+          selectable: false,
+          deletable: false,
+          data: {
+            label: "(R)",
+            quantity: "",
+            displayQuantity: "",
+            unit: "",
+            loopId,
+            loopRole: "reinforcingMarker",
+            feedbackLoopType: "reinforcing",
+            feedbackLoopPersistent: true,
+            reinforcingMarker: true,
+          },
+        };
+
+    const color = polarity === "positive" ? "#22c55e" : "#ef4444";
+
+    const edgeStockToMultiplier: Edge = {
+      id: generateEdgeId(currentEdges),
+      source: payload.stockId,
+      target: multiplierNodeId,
+      label: "",
+      data: {
+        kind: "neutral",
+        weight: 1,
+        feedbackLoop: true,
+        feedbackLoopType: "reinforcing",
+        reinforcingPolarity: polarity,
+        feedbackLoopPersistent: true,
+      },
+      style: { stroke: color, strokeWidth: 2.1 },
+    };
+
+    const edgeGrowthLimitToMultiplier: Edge | null =
+      growthLimitNodeId === undefined
+        ? null
+        : {
+            id: generateEdgeId([...currentEdges, edgeStockToMultiplier]),
+            source: growthLimitNodeId,
+            target: multiplierNodeId,
+            label: "",
+            data: {
+              kind: "neutral",
+              weight: 1,
+              feedbackLoop: true,
+              feedbackLoopType: "reinforcing",
+              reinforcingPolarity: polarity,
+              feedbackLoopPersistent: true,
+            },
+            style: { stroke: color, strokeWidth: 2.1 },
+          };
+
+    const edgeMultiplierToFlow: Edge = {
+      id: generateEdgeId(
+        edgeGrowthLimitToMultiplier
+          ? [...currentEdges, edgeStockToMultiplier, edgeGrowthLimitToMultiplier]
+          : [...currentEdges, edgeStockToMultiplier],
+      ),
+      source: multiplierNodeId,
+      target: payload.controlledFlowId,
+      label: polarity === "positive" ? "+" : "-",
+      data: {
+        kind: "neutral",
+        weight: 1,
+        feedbackLoop: true,
+        feedbackLoopType: "reinforcing",
+        reinforcingPolarity: polarity,
+        feedbackLoopPersistent: true,
+      },
+      style: { stroke: color, strokeWidth: 2.2 },
+    };
+
+    const nextLoop: ReinforcingFeedbackLoop = {
+      id: loopId,
+      type: "reinforcing",
+      stockId: payload.stockId,
+      multiplierNodeId,
+      growthLimitNodeId,
+      controlledFlowId: payload.controlledFlowId,
+      k,
+      polarity,
+      delayEnabled,
+      delaySteps,
+      clampNonNegative,
+      baseFlowExpression,
+      edgeIds: [
+        edgeStockToMultiplier.id,
+        ...(edgeGrowthLimitToMultiplier ? [edgeGrowthLimitToMultiplier.id] : []),
+        edgeMultiplierToFlow.id,
+      ],
+    };
+
+    const nextLoops = [...currentLoops, nextLoop];
+    const flowLoops = nextLoops.filter((loop) => loop.controlledFlowId === payload.controlledFlowId);
+    const nextFlowExpression = rebuildFlowExpression(baseFlowExpression, flowLoops);
+
+    const nextNodes = [
+      ...currentNodes.map((node) => {
+        if (node.id !== payload.controlledFlowId) return node;
+        return {
+          ...node,
+          data: {
+            ...(node.data ?? {}),
+            baseFlowExpression: String(node.data?.baseFlowExpression ?? baseFlowExpression),
+            expression: nextFlowExpression,
+          },
+        };
+      }),
+      multiplierNode,
+      ...(growthLimitNode ? [growthLimitNode] : []),
+      ...(markerNode ? [markerNode] : []),
+    ];
+
+    const nextEdges = [
+      ...currentEdges,
+      edgeStockToMultiplier,
+      ...(edgeGrowthLimitToMultiplier ? [edgeGrowthLimitToMultiplier] : []),
+      edgeMultiplierToFlow,
+    ];
+
+    set({
+      nodes: nextNodes,
+      edges: nextEdges,
+      feedbackLoops: nextLoops,
+      simulationSteps: [],
+      sliderIndex: 0,
+      selectedNodeId: multiplierNodeId,
+      selectedEdgeId: null,
+    });
+
+    return { ok: true, loopId };
+  },
+
   updateBalancingFeedbackLoop: (payload) => {
     if (get().lockEditing) return { ok: false, error: "Editing is locked while simulation is running." };
     const currentLoops = get().feedbackLoops;
     const loop = currentLoops.find((item) => item.id === payload.id);
     if (!loop) return { ok: false, error: "Feedback loop was not found." };
+    if (loop.type !== "balancing") return { ok: false, error: "Only balancing loops are editable." };
 
     const currentNodes = get().nodes;
     const currentEdges = get().edges;
@@ -714,7 +1110,11 @@ export const useLabStore = create<LabState>((set, get) => ({
     if (nodeKind(nextFlowNode) !== "flow") return { ok: false, error: "Selected controlled flow was not found." };
 
     const duplicate = currentLoops.some(
-      (item) => item.id !== loop.id && item.stockId === loop.stockId && item.controlledFlowId === payload.controlledFlowId,
+      (item) =>
+        item.id !== loop.id &&
+        item.type === "balancing" &&
+        item.stockId === loop.stockId &&
+        item.controlledFlowId === payload.controlledFlowId,
     );
     if (duplicate) {
       return { ok: false, error: "A balancing loop for this stock and flow already exists." };
@@ -734,7 +1134,23 @@ export const useLabStore = create<LabState>((set, get) => ({
               nextFlowNode.data?.quantity ??
               0,
           ).trim() || "0";
-    const nextFlowExpression = flowExpression(nextBaseFlowExpression, loop.correctiveNodeId, payload.operation);
+    const nextFlowExpression = rebuildFlowExpression(
+      nextBaseFlowExpression,
+      [
+        ...currentLoops.filter((item) => item.id !== loop.id && item.controlledFlowId === payload.controlledFlowId),
+        {
+          ...loop,
+          boundaryType: payload.boundaryType,
+          goalValue,
+          adjustmentTime,
+          operation: payload.operation,
+          delayEnabled,
+          delaySteps,
+          controlledFlowId: payload.controlledFlowId,
+          baseFlowExpression: nextBaseFlowExpression,
+        } satisfies BalancingFeedbackLoop,
+      ],
+    );
     const nextDiscrepancyExpr = discrepancyExpression(payload.boundaryType, loop.goalNodeId, loop.stockId);
     const nextCorrectiveExpr = correctiveExpression(
       adjustmentTime,
@@ -815,22 +1231,21 @@ export const useLabStore = create<LabState>((set, get) => ({
       };
     });
 
-    const nextLoops = currentLoops.map((item) =>
-      item.id !== loop.id
-        ? item
-        : {
-            ...item,
-            boundaryType: payload.boundaryType,
-            goalValue,
-            adjustmentTime,
-            operation: payload.operation,
-            delayEnabled,
-            delaySteps,
-            clampNonNegative: true,
-            controlledFlowId: payload.controlledFlowId,
-            baseFlowExpression: nextBaseFlowExpression,
-          },
-    );
+    const nextLoops = currentLoops.map((item) => {
+      if (item.id !== loop.id) return item;
+      return {
+        ...item,
+        boundaryType: payload.boundaryType,
+        goalValue,
+        adjustmentTime,
+        operation: payload.operation,
+        delayEnabled,
+        delaySteps,
+        clampNonNegative: true,
+        controlledFlowId: payload.controlledFlowId,
+        baseFlowExpression: nextBaseFlowExpression,
+      };
+    });
 
     set({
       nodes: nextNodes,
@@ -856,8 +1271,20 @@ export const useLabStore = create<LabState>((set, get) => ({
     const currentEdges = get().edges;
     const selectedNodeId = get().selectedNodeId;
     const selectedEdgeId = get().selectedEdgeId;
-
-    const nodesToRemove = new Set([loop.goalNodeId, loop.discrepancyNodeId, loop.correctiveNodeId]);
+    const nodesToRemove = new Set(
+      loop.type === "balancing"
+        ? [loop.goalNodeId, loop.discrepancyNodeId, loop.correctiveNodeId]
+        : [loop.multiplierNodeId, ...(loop.growthLimitNodeId ? [loop.growthLimitNodeId] : [])],
+    );
+    const markerNodeIds = currentNodes
+      .filter(
+        (node) =>
+          node.data?.feedbackLoopType === "reinforcing" &&
+          node.data?.loopRole === "reinforcingMarker" &&
+          node.data?.loopId === loop.id,
+      )
+      .map((node) => node.id);
+    for (const markerId of markerNodeIds) nodesToRemove.add(markerId);
     const edgesToRemove = new Set(loop.edgeIds);
     const nextLoops = currentLoops.filter((item) => item.id !== loop.id);
 
@@ -893,10 +1320,7 @@ export const useLabStore = create<LabState>((set, get) => ({
           };
         }
 
-        const rebuiltExpression = flowLoopsLeft.reduce(
-          (expression, flowLoop) => flowExpression(expression, flowLoop.correctiveNodeId, flowLoop.operation),
-          restoredBase,
-        );
+        const rebuiltExpression = rebuildFlowExpression(restoredBase, flowLoopsLeft);
 
         return {
           ...node,
@@ -933,6 +1357,25 @@ export const useLabStore = create<LabState>((set, get) => ({
 
   clearSimulation: () => set({ simulationSteps: [], sliderIndex: 0, lockEditing: false }),
 
+  resetToInitialGraph: () =>
+    set({
+      nodes: initialNodes.map((node) => ({
+        ...node,
+        position: { ...node.position },
+        data: { ...(node.data ?? {}) },
+      })),
+      edges: initialEdges.map((edge) => ({
+        ...edge,
+        data: { ...(edge.data ?? {}) },
+      })),
+      feedbackLoops: [],
+      simulationSteps: [],
+      sliderIndex: 0,
+      lockEditing: false,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+    }),
+
   replaceGraph: (nodes, edges) =>
     set({
       nodes,
@@ -953,7 +1396,12 @@ export const useLabStore = create<LabState>((set, get) => ({
       bottleneck: clampFlowNonNegative(node.data?.bottleneck ?? node.data?.quantity ?? node.data?.initial ?? 0),
       expression: String(node.data?.expression ?? ""),
       base_flow_expression: String(node.data?.baseFlowExpression ?? ""),
+      loop_id: String(node.data?.loopId ?? ""),
       loop_role: String(node.data?.loopRole ?? ""),
+      feedback_loop_type: String(node.data?.feedbackLoopType ?? ""),
+      feedback_loop_persistent: Boolean(node.data?.feedbackLoopPersistent),
+      reinforcing_text_only: Boolean(node.data?.reinforcingTextOnly),
+      reinforcing_marker: Boolean(node.data?.reinforcingMarker),
       unit: String(node.data?.unit ?? ""),
       color: String(node.data?.color ?? ""),
       decay: 0,
@@ -970,6 +1418,9 @@ export const useLabStore = create<LabState>((set, get) => ({
       op: String(edge.data?.op ?? ""),
       weight: Number(edge.data?.weight ?? 0),
       feedback_loop: Boolean(edge.data?.feedbackLoop),
+      feedback_loop_type: String(edge.data?.feedbackLoopType ?? ""),
+      reinforcing_polarity: String(edge.data?.reinforcingPolarity ?? ""),
+      feedback_loop_persistent: Boolean(edge.data?.feedbackLoopPersistent),
     }));
     return {
       nodes,
@@ -1006,7 +1457,12 @@ export const useLabStore = create<LabState>((set, get) => ({
           bottleneck: clampFlowNonNegative(item.bottleneck ?? quantityRaw),
           expression: String(item.expression ?? ""),
           baseFlowExpression: String(item.base_flow_expression ?? item.baseFlowExpression ?? ""),
+          loopId: String(item.loop_id ?? item.loopId ?? ""),
           loopRole: String(item.loop_role ?? item.loopRole ?? ""),
+          feedbackLoopType: String(item.feedback_loop_type ?? item.feedbackLoopType ?? ""),
+          feedbackLoopPersistent: item.feedback_loop_persistent === true || item.feedbackLoopPersistent === true,
+          reinforcingTextOnly: item.reinforcing_text_only === true || item.reinforcingTextOnly === true,
+          reinforcingMarker: item.reinforcing_marker === true || item.reinforcingMarker === true,
           unit: String(item.unit ?? ""),
           color: String(item.color ?? ""),
         },
@@ -1041,6 +1497,9 @@ export const useLabStore = create<LabState>((set, get) => ({
           weight,
           op: isControlOp(String(item.op ?? "")) ? String(item.op) : "add",
           feedbackLoop: item.feedback_loop === true || item.feedbackLoop === true,
+          feedbackLoopType: String(item.feedback_loop_type ?? item.feedbackLoopType ?? ""),
+          reinforcingPolarity: String(item.reinforcing_polarity ?? item.reinforcingPolarity ?? ""),
+          feedbackLoopPersistent: item.feedback_loop_persistent === true || item.feedbackLoopPersistent === true,
         },
       };
     });
@@ -1053,7 +1512,7 @@ export const useLabStore = create<LabState>((set, get) => ({
 
     const parsedLoops = rawLoops
       .map(parseLoopRecord)
-      .filter((item): item is BalancingFeedbackLoop => Boolean(item));
+      .filter((item): item is FeedbackLoop => Boolean(item));
 
     const feedbackLoops = sanitizeLoopCollection(parsedLoops, nodes, edges);
 
