@@ -5,7 +5,7 @@ from src.services.simulation import SimulationRunService
 from src.schemas.simulations import RunCreate, RunDetail, RunStepPublic, RunSummary
 from src.auth.dependencies import get_current_user
 from src.models.users import User
-from src.services.system import SystemModelService
+from src.services.system import SystemAccessDeniedError, SystemModelService
 from src.services.simulation_engine import simulate
 from src.utils.dependencies import get_db
 
@@ -46,9 +46,12 @@ def create_run(
 
     if data.model_id:
         try:
-            model = SystemModelService.get(db, data.model_id, user_id=current_user.id)
+            model = SystemModelService.get(db, data.model_id)
+            SystemModelService.ensure_view_access(model, current_user.id, is_admin=bool(current_user.is_admin))
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except SystemAccessDeniedError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
         model_snapshot = model.graph_json
         model_id = model.id
     else:

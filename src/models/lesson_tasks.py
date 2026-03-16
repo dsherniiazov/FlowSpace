@@ -12,6 +12,6 @@ class LessonTask(Base):
     lesson_id = Column(Integer, ForeignKey("lessons.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
-    system_id = Column(Integer, ForeignKey("system_models.id", ondelete="SET NULL"), nullable=True)
+    system_id = Column(Integer, ForeignKey("system_models.id", ondelete="RESTRICT"), nullable=False, unique=True)
     order_index = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

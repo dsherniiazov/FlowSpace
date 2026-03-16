@@ -7,14 +7,12 @@ class LessonTaskCreate(BaseModel):
     lesson_id: int
     title: str
     description: str
-    system_id: int | None = None
     order_index: int | None = None
 
 
 class LessonTaskUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    system_id: int | None = None
     order_index: int | None = None
 
 
@@ -25,7 +23,7 @@ class LessonTaskOut(BaseModel):
     lesson_id: int
     title: str
     description: str
-    system_id: int | None = None
+    system_id: int
     order_index: int | None = None
     created_at: datetime | None = None
 

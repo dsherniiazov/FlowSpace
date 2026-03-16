@@ -1,5 +1,5 @@
 import { api } from "../../lib/api";
-import { LessonTask } from "../../types/api";
+import { LessonTask, SystemModel } from "../../types/api";
 
 export async function fetchLessonTasks(lessonId?: number): Promise<LessonTask[]> {
   const { data } = await api.get<LessonTask[]>("/lesson-tasks", {
@@ -12,7 +12,6 @@ export async function createLessonTask(payload: {
   lesson_id: number;
   title: string;
   description: string;
-  system_id?: number | null;
   order_index?: number | null;
 }): Promise<LessonTask> {
   const { data } = await api.post<LessonTask>("/lesson-tasks", payload);
@@ -31,5 +30,10 @@ export async function updateLessonTask(id: number, payload: Partial<LessonTask>)
 
 export async function deleteLessonTask(id: number): Promise<LessonTask> {
   const { data } = await api.delete<LessonTask>(`/lesson-tasks/${id}`);
+  return data;
+}
+
+export async function startLessonTask(taskId: number): Promise<SystemModel> {
+  const { data } = await api.post<SystemModel>(`/lesson-tasks/${taskId}/start`);
   return data;
 }

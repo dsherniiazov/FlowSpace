@@ -3,9 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 
 import { fetchLessons } from "../features/lessons/api";
-import { fetchLessonTask } from "../features/lessonTasks/api";
+import { fetchLessonTask, startLessonTask } from "../features/lessonTasks/api";
 import { fetchSections } from "../features/sections/api";
-import { fetchSystem } from "../features/systems/api";
 import { completeTask, fetchCompletedTasks, uncompleteTask } from "../features/taskProgress/api";
 import { AppLayoutOutletContext } from "../layouts/AppLayout";
 import { useLabStore } from "../store/labStore";
@@ -36,14 +35,31 @@ export function TaskExecutionPage(): JSX.Element {
       queryClient.invalidateQueries({ queryKey: ["completed-lessons"] });
     },
   });
+  const startTaskMutation = useMutation({
+    mutationFn: async (nextTaskId: number) => startLessonTask(nextTaskId),
+    onSuccess: (system) => {
+      if (!task) return;
+      loadGraphJson(system.graph_json);
+      setActiveSystemId(system.id);
+      navigate("/app/lab", {
+        state: {
+          systemId: system.id,
+          systemTitle: system.title,
+          systemGraph: system.graph_json,
+          taskContext: {
+            taskId: task.id,
+            lessonId: task.lesson_id,
+            taskTitle: task.title,
+            taskDescription: task.description,
+          },
+        },
+      });
+    },
+  });
 
-  if (taskQuery.isLoading || lessonsQuery.isLoading || sectionsQuery.isLoading) return <div>Loading task...</div>;
-  if (taskQuery.isError || !taskQuery.data) return <div className="text-zinc-400">Unable to load task.</div>;
-
-  const task = taskQuery.data;
-  const lesson = (lessonsQuery.data ?? []).find((item) => item.id === task.lesson_id) ?? null;
+  const task = taskQuery.data ?? null;
+  const lesson = task ? (lessonsQuery.data ?? []).find((item) => item.id === task.lesson_id) ?? null : null;
   const section = lesson ? (sectionsQuery.data ?? []).find((item) => item.id === lesson.section_id) ?? null : null;
-  const done = new Set((completedTasksQuery.data ?? []).map((item) => item.task_id)).has(task.id);
 
   useEffect(() => {
     if (lesson && section) {
@@ -53,6 +69,10 @@ export function TaskExecutionPage(): JSX.Element {
     }
     return () => setLessonHeader(null);
   }, [lesson, section, setLessonHeader]);
+
+  if (taskQuery.isLoading || lessonsQuery.isLoading || sectionsQuery.isLoading) return <div>Loading task...</div>;
+  if (taskQuery.isError || !task) return <div className="text-zinc-400">Unable to load task.</div>;
+  const done = new Set((completedTasksQuery.data ?? []).map((item) => item.task_id)).has(task.id);
 
   return (
     <section className="panel p-6">
@@ -73,25 +93,13 @@ export function TaskExecutionPage(): JSX.Element {
         >
           {done ? "Mark as not completed" : "Mark as completed"}
         </button>
-        {task.system_id ? (
-          <button
-            className="btn-primary"
-            onClick={async () => {
-              const system = await fetchSystem(task.system_id as number);
-              loadGraphJson(system.graph_json);
-              setActiveSystemId(system.id);
-              navigate("/app/lab", {
-                state: {
-                  systemId: system.id,
-                  systemTitle: system.title,
-                  systemGraph: system.graph_json,
-                },
-              });
-            }}
-          >
-            Open task system
-          </button>
-        ) : null}
+        <button
+          className="btn-primary"
+          onClick={() => startTaskMutation.mutate(task.id)}
+          disabled={startTaskMutation.isPending}
+        >
+          {startTaskMutation.isPending ? "Opening..." : "Open task system"}
+        </button>
       </div>
     </section>
   );

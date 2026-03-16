@@ -35,6 +35,7 @@ export type SystemModel = {
   id: number;
   owner_id: number | null;
   lesson_id: number | null;
+  source_system_id?: number | null;
   title: string;
   graph_json: Record<string, unknown>;
   is_public?: boolean | null;
@@ -82,7 +83,7 @@ export type LessonTask = {
   lesson_id: number;
   title: string;
   description: string;
-  system_id?: number | null;
+  system_id: number;
   order_index?: number | null;
   created_at?: string | null;
 };

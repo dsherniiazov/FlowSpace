@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactFlow, { Background, BackgroundVariant, Edge, MarkerType, Node, ReactFlowInstance } from "reactflow";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "reactflow/dist/style.css";
 
 import { ConstantNode } from "../components/ConstantNode";
@@ -15,8 +15,10 @@ import { FlowNode } from "../components/FlowNode";
 import { StockNode } from "../components/StockNode";
 import { VariableNode } from "../components/VariableNode";
 import { SimulationChart } from "../components/SimulationChart";
+import { fetchLessonTasks } from "../features/lessonTasks/api";
 import { createSystem, fetchSystems, updateSystem } from "../features/systems/api";
-import { RunStep, SystemModel } from "../types/api";
+import { completeTask, fetchCompletedTasks } from "../features/taskProgress/api";
+import { LessonTask, RunStep, SystemModel } from "../types/api";
 import { useAuthStore } from "../store/authStore";
 import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, STOCK_COLOR_PRESETS, useLabStore } from "../store/labStore";
 
@@ -29,6 +31,18 @@ const TARGET_FPS = 30;
 type ControlOp = "add" | "sub" | "mul" | "div" | "pow" | "mod";
 type SourceHandleId = "source-left" | "source-right" | "source-top" | "source-bottom";
 type TargetHandleId = "target-left" | "target-right" | "target-top" | "target-bottom";
+type LabTaskContext = {
+  taskId: number;
+  lessonId: number;
+  taskTitle: string;
+  taskDescription: string;
+};
+type LabNavigationState = {
+  systemId?: number;
+  systemTitle?: string;
+  systemGraph?: Record<string, unknown>;
+  taskContext?: LabTaskContext;
+};
 
 const CONTROL_OPS: Array<{ value: ControlOp; label: string }> = [
   { value: "add", label: "+" },
@@ -470,11 +484,13 @@ function LockToggleIcon({ locked }: { locked: boolean }): JSX.Element {
 
 export function LabPage(): JSX.Element {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [title, setTitle] = useState("My dynamic system");
   const [zoomPercent, setZoomPercent] = useState(100);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isChartModalOpen, setIsChartModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const [canvasLocked, setCanvasLocked] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
@@ -486,6 +502,7 @@ export function LabPage(): JSX.Element {
   const [selectedNodeNumericInput, setSelectedNodeNumericInput] = useState("");
   const [createFeedbackLoopStockId, setCreateFeedbackLoopStockId] = useState<string | null>(null);
   const [editingFeedbackLoopId, setEditingFeedbackLoopId] = useState<string | null>(null);
+  const [lessonTaskContext, setLessonTaskContext] = useState<LabTaskContext | null>(null);
   const [isLightTheme, setIsLightTheme] = useState<boolean>(() => {
     if (typeof document === "undefined") return false;
     return document.documentElement.dataset.theme === "light";
@@ -499,6 +516,16 @@ export function LabPage(): JSX.Element {
   const userId = useAuthStore((state) => state.userId);
   const location = useLocation();
   const systemsQuery = useQuery({ queryKey: ["systems"], queryFn: fetchSystems });
+  const lessonTasksQuery = useQuery({
+    queryKey: ["lesson-tasks", lessonTaskContext?.lessonId ?? null],
+    queryFn: () => fetchLessonTasks(lessonTaskContext?.lessonId),
+    enabled: lessonTaskContext !== null,
+  });
+  const completedTasksQuery = useQuery({
+    queryKey: ["completed-tasks"],
+    queryFn: fetchCompletedTasks,
+    enabled: lessonTaskContext !== null,
+  });
 
   const {
     nodes,
@@ -573,6 +600,9 @@ export function LabPage(): JSX.Element {
   const duplicateTitleExists = useMemo(() => {
     const systems = (systemsQuery.data ?? []) as SystemModel[];
     if (!userId || !titleTrimmed) return false;
+    if (activeSystemId !== null && !systems.some((system) => system.id === activeSystemId && system.owner_id === userId)) {
+      return false;
+    }
     const current = normalizeTitle(titleTrimmed);
     return systems.some(
       (system) => system.owner_id === userId && system.id !== activeSystemId && normalizeTitle(system.title) === current,
@@ -592,6 +622,25 @@ export function LabPage(): JSX.Element {
     return currentSaveSignature !== lastSavedSignature;
   }, [currentSaveSignature, lastSavedSignature]);
   const saveDisabledNoChanges = lastSavedSignature !== null && !hasUnsavedChanges;
+  const lessonTasks: LessonTask[] = useMemo(
+    () =>
+      [...(lessonTasksQuery.data ?? [])].sort(
+        (a, b) => Number(a.order_index ?? Number.MAX_SAFE_INTEGER) - Number(b.order_index ?? Number.MAX_SAFE_INTEGER),
+      ),
+    [lessonTasksQuery.data],
+  );
+  const completedTaskSet = useMemo(
+    () => new Set((completedTasksQuery.data ?? []).map((item) => item.task_id)),
+    [completedTasksQuery.data],
+  );
+  const isCurrentTaskCompleted = lessonTaskContext ? completedTaskSet.has(lessonTaskContext.taskId) : false;
+  const nextLessonTask = useMemo(() => {
+    if (!lessonTaskContext) return null;
+    const currentTaskIndex = lessonTasks.findIndex((task) => task.id === lessonTaskContext.taskId);
+    if (currentTaskIndex < 0) return null;
+    return lessonTasks[currentTaskIndex + 1] ?? null;
+  }, [lessonTaskContext, lessonTasks]);
+  const canResolveLessonNavigation = lessonTaskContext !== null && !lessonTasksQuery.isLoading && !lessonTasksQuery.isError;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -631,7 +680,7 @@ export function LabPage(): JSX.Element {
       if (activeSystemId) {
         return updateSystem(activeSystemId, { title: titleTrimmed, graph_json: graph });
       }
-      return createSystem({ owner_id: userId, title: titleTrimmed, graph_json: graph });
+      return createSystem({ title: titleTrimmed, graph_json: graph });
     },
     onSuccess: (saved) => {
       setActiveSystemId(saved.id);
@@ -645,6 +694,13 @@ export function LabPage(): JSX.Element {
       queryClient.invalidateQueries({ queryKey: ["systems"] });
     },
   });
+  const completeTaskMutation = useMutation({
+    mutationFn: async (taskId: number) => completeTask(taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["completed-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-lessons"] });
+    },
+  });
   const saveButtonDisabled = saveMutation.isPending || saveDisabledNoChanges;
 
   useEffect(() => {
@@ -654,7 +710,7 @@ export function LabPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const state = (location.state ?? {}) as { systemId?: number; systemTitle?: string; systemGraph?: Record<string, unknown> };
+    const state = (location.state ?? {}) as LabNavigationState;
     if (typeof state.systemId === "number") {
       setActiveSystemId(state.systemId);
       if (state.systemGraph && typeof state.systemGraph === "object") {
@@ -668,6 +724,25 @@ export function LabPage(): JSX.Element {
     } else {
       loadedSystemGraphIdRef.current = null;
       setLastSavedSignature(null);
+    }
+    const taskContext = state.taskContext;
+    const hasTaskContext =
+      taskContext &&
+      typeof taskContext.taskId === "number" &&
+      typeof taskContext.lessonId === "number" &&
+      typeof taskContext.taskTitle === "string" &&
+      typeof taskContext.taskDescription === "string";
+    if (hasTaskContext) {
+      setLessonTaskContext({
+        taskId: taskContext.taskId,
+        lessonId: taskContext.lessonId,
+        taskTitle: taskContext.taskTitle,
+        taskDescription: taskContext.taskDescription,
+      });
+      setIsTaskModalOpen(false);
+    } else {
+      setLessonTaskContext(null);
+      setIsTaskModalOpen(false);
     }
     if (typeof state.systemTitle === "string" && state.systemTitle.trim()) setTitle(state.systemTitle);
   }, [location.state, loadGraphJson, setActiveSystemId]);
@@ -1386,6 +1461,20 @@ export function LabPage(): JSX.Element {
     saveMutation.mutate();
   }
 
+  function handleMarkTaskCompleted(): void {
+    if (!lessonTaskContext || isCurrentTaskCompleted || completeTaskMutation.isPending) return;
+    completeTaskMutation.mutate(lessonTaskContext.taskId);
+  }
+
+  function handleTaskProgressNavigation(): void {
+    if (!lessonTaskContext || !canResolveLessonNavigation) return;
+    if (nextLessonTask) {
+      navigate(`/app/tasks/${nextLessonTask.id}`);
+      return;
+    }
+    navigate("/app/lessons");
+  }
+
   function createNewSystem(): void {
     if (lockEditing) return;
     const confirmed = window.confirm("Create a new system and discard current unsaved changes?");
@@ -1910,6 +1999,41 @@ export function LabPage(): JSX.Element {
           </div>
         </div>
 
+        {lessonTaskContext ? (
+          <div className="lab-divider pt-4 space-y-3">
+            <div className="lab-chart-head">
+              <span className="text-sm lab-field">Task</span>
+              <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsTaskModalOpen(true)}>
+                Full screen
+              </button>
+            </div>
+            <div className="lab-task-card">
+              <div className="lab-task-card-title">{lessonTaskContext.taskTitle}</div>
+              <p className="lab-task-card-description">{lessonTaskContext.taskDescription}</p>
+            </div>
+            <div className={`text-xs ${isCurrentTaskCompleted ? "lab-task-status-completed" : "lab-muted"}`}>
+              {isCurrentTaskCompleted ? "Task marked as completed." : "Task is not completed yet."}
+            </div>
+            {lessonTasksQuery.isError ? <div className="text-xs lab-error">Unable to load lesson tasks.</div> : null}
+            <button
+              className="lab-btn lab-btn-primary w-full"
+              type="button"
+              onClick={handleMarkTaskCompleted}
+              disabled={isCurrentTaskCompleted || completeTaskMutation.isPending}
+            >
+              {isCurrentTaskCompleted ? "Task completed" : completeTaskMutation.isPending ? "Saving..." : "Mark task as completed"}
+            </button>
+            <button
+              className="lab-btn lab-btn-secondary w-full"
+              type="button"
+              onClick={handleTaskProgressNavigation}
+              disabled={!canResolveLessonNavigation}
+            >
+              {!canResolveLessonNavigation ? "Loading lesson tasks..." : nextLessonTask ? "Go to next task" : "Finish lesson"}
+            </button>
+          </div>
+        ) : null}
+
       </aside>
 
       <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-right lab-floating-panel-editor space-y-4">
@@ -2197,6 +2321,44 @@ export function LabPage(): JSX.Element {
         onSubmitBalancingLoop={createBalancingLoopFromModal}
         onSubmitReinforcingLoop={createReinforcingLoopFromModal}
       />
+      {isTaskModalOpen && lessonTaskContext ? (
+        <div className="lab-modal-overlay" onClick={() => setIsTaskModalOpen(false)}>
+          <div className="lab-task-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="lab-chart-modal-head">
+              <h3 className="lab-panel-title">Task</h3>
+              <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsTaskModalOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="lab-task-modal-body">
+              <h4 className="lab-task-modal-title">{lessonTaskContext.taskTitle}</h4>
+              <p className="lab-task-modal-description">{lessonTaskContext.taskDescription}</p>
+              <div className={`text-sm ${isCurrentTaskCompleted ? "lab-task-status-completed" : "lab-muted"}`}>
+                {isCurrentTaskCompleted ? "Task marked as completed." : "Task is not completed yet."}
+              </div>
+              {lessonTasksQuery.isError ? <div className="text-sm lab-error">Unable to load lesson tasks.</div> : null}
+              <div className="lab-task-modal-actions">
+                <button
+                  className="lab-btn lab-btn-primary"
+                  type="button"
+                  onClick={handleMarkTaskCompleted}
+                  disabled={isCurrentTaskCompleted || completeTaskMutation.isPending}
+                >
+                  {isCurrentTaskCompleted ? "Task completed" : completeTaskMutation.isPending ? "Saving..." : "Mark task as completed"}
+                </button>
+                <button
+                  className="lab-btn lab-btn-secondary"
+                  type="button"
+                  onClick={handleTaskProgressNavigation}
+                  disabled={!canResolveLessonNavigation}
+                >
+                  {!canResolveLessonNavigation ? "Loading lesson tasks..." : nextLessonTask ? "Go to next task" : "Finish lesson"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isChartModalOpen ? (
         <div className="lab-modal-overlay" onClick={() => setIsChartModalOpen(false)}>
           <div className="lab-chart-modal" onClick={(e) => e.stopPropagation()}>

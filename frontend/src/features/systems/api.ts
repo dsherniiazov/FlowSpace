@@ -12,7 +12,7 @@ export async function fetchSystem(systemId: number): Promise<SystemModel> {
 }
 
 export async function createSystem(payload: {
-  owner_id: number;
+  owner_id?: number | null;
   title: string;
   graph_json: Record<string, unknown>;
   lesson_id?: number | null;
@@ -28,8 +28,9 @@ export async function updateSystem(
   payload: {
     title?: string;
     graph_json?: Record<string, unknown>;
-    owner_id?: number;
+    owner_id?: number | null;
     lesson_id?: number | null;
+    source_system_id?: number | null;
     is_public?: boolean;
     is_template?: boolean;
   },
