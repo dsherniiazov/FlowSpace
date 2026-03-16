@@ -1,13 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { fetchSystems } from "../features/systems/api";
+import { useAuthStore } from "../store/authStore";
 import { useLabStore } from "../store/labStore";
 
 export function MySystemsPage(): JSX.Element {
   const navigate = useNavigate();
+  const userId = useAuthStore((state) => state.userId);
   const loadGraphJson = useLabStore((state) => state.loadGraphJson);
   const setActiveSystemId = useLabStore((state) => state.setActiveSystemId);
-  const systemsQuery = useQuery({ queryKey: ["systems"], queryFn: fetchSystems });
+  const systemsQuery = useQuery({
+    queryKey: ["systems", userId],
+    queryFn: fetchSystems,
+    enabled: !!userId,
+  });
 
   if (systemsQuery.isLoading) return <div>Loading systems...</div>;
   if (systemsQuery.isError) return <div className="text-red-300">Unable to fetch systems.</div>;

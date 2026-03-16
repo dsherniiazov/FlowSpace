@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from src.services.progress import UserProgressService
 from src.schemas.progress import CompletedLesson, ProgressSummary
 from src.auth.dependencies import get_current_user
 from src.models.users import User
@@ -14,12 +13,15 @@ router = APIRouter(prefix="/progress", tags=["progress"], dependencies=[Depends(
 
 @router.get("", response_model=ProgressSummary)
 def get_progress(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    total_tasks, completed_tasks = TaskProgressService.summary_for_user(db, current_user.id)
     total_lessons = LessonService.count_all(db)
     completed_lessons = len(TaskProgressService.completed_lesson_ids(db, current_user.id))
-    progress_percent = (completed_lessons / total_lessons * 100) if total_lessons else 0.0
+    progress_percent = 100.0 if total_tasks == 0 else (completed_tasks / total_tasks * 100)
 
     return ProgressSummary(
         user_id=current_user.id,
+        total_tasks=total_tasks,
+        completed_tasks=completed_tasks,
         total_lessons=total_lessons,
         completed_lessons=completed_lessons,
         progress_percent=round(progress_percent, 2),

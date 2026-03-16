@@ -50,6 +50,18 @@ class TaskProgressService:
         return db.query(UserTaskProgress).filter(UserTaskProgress.user_id == user_id).all()
 
     @staticmethod
+    def summary_for_user(db: Session, user_id: int) -> tuple[int, int]:
+        total_tasks = db.query(func.count(LessonTask.id)).scalar() or 0
+        completed_tasks = (
+            db.query(func.count(UserTaskProgress.id))
+            .join(LessonTask, LessonTask.id == UserTaskProgress.task_id)
+            .filter(UserTaskProgress.user_id == user_id)
+            .scalar()
+            or 0
+        )
+        return int(total_tasks), int(completed_tasks)
+
+    @staticmethod
     def completed_lesson_ids(db: Session, user_id: int) -> list[int]:
         subq = (
             db.query(

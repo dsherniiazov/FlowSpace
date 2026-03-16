@@ -14,7 +14,7 @@ router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(get_cu
 BASE_DIR = Path(__file__).resolve().parents[2]
 AVATARS_DIR = BASE_DIR / "files" / "avatars"
 AVATARS_DIR.mkdir(parents=True, exist_ok=True)
-ALLOWED_AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".jfif"}
 MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
 
 
@@ -118,7 +118,10 @@ async def upload_avatar(
 
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_AVATAR_EXTS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported avatar format")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported avatar format. Use PNG, JPG, JPEG, WEBP, GIF, BMP, or AVIF.",
+        )
 
     content = await file.read()
     if len(content) > MAX_AVATAR_SIZE_BYTES:

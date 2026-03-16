@@ -1,5 +1,6 @@
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { RunStep } from "../types/api";
+import { getChartColorPalette, useUiPreferencesStore } from "../store/uiPreferencesStore";
 
 type Props = {
   steps: RunStep[];
@@ -9,21 +10,27 @@ type Props = {
 };
 
 export function SimulationChart({ steps, focusIndex, chartHeight = 224, isLightTheme = false }: Props): JSX.Element {
+  const colorblindMode = useUiPreferencesStore((state) => state.colorblindMode);
+  const highContrastMode = useUiPreferencesStore((state) => state.highContrastMode);
+  const contrastText = isLightTheme ? "#0f172a" : "#f8fafc";
+  const contrastPanel = isLightTheme ? "#ffffff" : "#020617";
+  const contrastBorder = isLightTheme ? "#334155" : "#94a3b8";
   if (steps.length === 0) {
-    return <div style={{ color: isLightTheme ? "#000000" : "#a3a3a3" }}>No simulation results yet.</div>;
+    return <div style={{ color: highContrastMode ? contrastText : isLightTheme ? "#000000" : "#a3a3a3" }}>No simulation results yet.</div>;
   }
 
   const keys = Object.keys(steps[0].values).filter((key) => !key.startsWith("_"));
   const chartData = steps.map((step) => ({ time: step.time, ...step.values }));
   const focus = steps[Math.min(focusIndex, steps.length - 1)];
-  const axisColor = isLightTheme ? "#000000" : "#d4d4d4";
-  const tooltipBackground = isLightTheme ? "#ffffff" : "#0a0a0a";
-  const tooltipBorder = isLightTheme ? "#d1d5db" : "#2b2b2b";
-  const tooltipText = isLightTheme ? "#000000" : "#f5f5f5";
+  const axisColor = highContrastMode ? contrastText : isLightTheme ? "#000000" : "#d4d4d4";
+  const tooltipBackground = highContrastMode ? contrastPanel : isLightTheme ? "#ffffff" : "#0a0a0a";
+  const tooltipBorder = highContrastMode ? contrastBorder : isLightTheme ? "#d1d5db" : "#2b2b2b";
+  const tooltipText = highContrastMode ? contrastText : isLightTheme ? "#000000" : "#f5f5f5";
+  const chartPalette = getChartColorPalette(colorblindMode, highContrastMode);
 
   return (
     <div className="space-y-2">
-      <div className="text-xs" style={{ color: isLightTheme ? "#000000" : "#a3a3a3" }}>
+      <div className="text-xs" style={{ color: highContrastMode ? contrastText : isLightTheme ? "#000000" : "#a3a3a3" }}>
         Step {focus.step_index} at t={focus.time.toFixed(3)}
       </div>
       <div className="lab-chart-viewport w-full rounded border border-slate-200 bg-white p-2" style={{ height: chartHeight }}>
@@ -41,7 +48,7 @@ export function SimulationChart({ steps, focusIndex, chartHeight = 224, isLightT
                 key={key}
                 type="monotone"
                 dataKey={key}
-                stroke={index % 2 === 0 ? "#18e0c2" : "#f97316"}
+                stroke={chartPalette[index % chartPalette.length]}
                 dot={false}
                 strokeWidth={2}
               />

@@ -20,7 +20,9 @@ import { createSystem, fetchSystems, updateSystem } from "../features/systems/ap
 import { completeTask, fetchCompletedTasks } from "../features/taskProgress/api";
 import { LessonTask, RunStep, SystemModel } from "../types/api";
 import { useAuthStore } from "../store/authStore";
-import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, STOCK_COLOR_PRESETS, useLabStore } from "../store/labStore";
+import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, useLabStore } from "../store/labStore";
+import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
+import { getLabColorTokens, resolveStockColor, useUiPreferencesStore } from "../store/uiPreferencesStore";
 
 const DEFAULT_ZOOM = 0.6;
 const MIN_ZOOM = 0.06;
@@ -127,16 +129,8 @@ function applyOperation(current: number, input: number, op: ControlOp): number {
   }
 }
 
-function controlEdgeColor(op: ControlOp): string {
-  const palette: Record<ControlOp, string> = {
-    add: "#22c55e",
-    sub: "#ef4444",
-    mul: "#a855f7",
-    div: "#eab308",
-    pow: "#06b6d4",
-    mod: "#f97316",
-  };
-  return palette[op];
+function controlEdgeColor(op: ControlOp, colorPalette: ReturnType<typeof getLabColorTokens>): string {
+  return colorPalette.control[op];
 }
 
 function isFlowNode(node: Node | undefined): boolean {
@@ -485,6 +479,11 @@ function LockToggleIcon({ locked }: { locked: boolean }): JSX.Element {
 export function LabPage(): JSX.Element {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const colorblindMode = useUiPreferencesStore((state) => state.colorblindMode);
+  const highContrastMode = useUiPreferencesStore((state) => state.highContrastMode);
+  const labColorTokens = useMemo(() => getLabColorTokens(colorblindMode, highContrastMode), [colorblindMode, highContrastMode]);
+  const stockColorPresets = labColorTokens.stockPresets;
+  const shortcutBindings = useShortcutStore((state) => state.bindings);
   const [title, setTitle] = useState("My dynamic system");
   const [zoomPercent, setZoomPercent] = useState(100);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -515,16 +514,20 @@ export function LabPage(): JSX.Element {
   const loadedSystemGraphIdRef = useRef<number | null>(null);
   const userId = useAuthStore((state) => state.userId);
   const location = useLocation();
-  const systemsQuery = useQuery({ queryKey: ["systems"], queryFn: fetchSystems });
+  const systemsQuery = useQuery({
+    queryKey: ["systems", userId],
+    queryFn: fetchSystems,
+    enabled: !!userId,
+  });
   const lessonTasksQuery = useQuery({
     queryKey: ["lesson-tasks", lessonTaskContext?.lessonId ?? null],
     queryFn: () => fetchLessonTasks(lessonTaskContext?.lessonId),
     enabled: lessonTaskContext !== null,
   });
   const completedTasksQuery = useQuery({
-    queryKey: ["completed-tasks"],
+    queryKey: ["completed-tasks", userId],
     queryFn: fetchCompletedTasks,
-    enabled: lessonTaskContext !== null,
+    enabled: lessonTaskContext !== null && !!userId,
   });
 
   const {
@@ -691,14 +694,15 @@ export function LabPage(): JSX.Element {
           ? (saved.graph_json as Record<string, unknown>)
           : (toGraphJson() as Record<string, unknown>);
       setLastSavedSignature(buildSaveSignature(String(saved.title ?? titleTrimmed), savedGraph));
-      queryClient.invalidateQueries({ queryKey: ["systems"] });
+      queryClient.invalidateQueries({ queryKey: ["systems", userId] });
     },
   });
   const completeTaskMutation = useMutation({
     mutationFn: async (taskId: number) => completeTask(taskId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["completed-tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["completed-lessons"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-tasks", userId] });
+      queryClient.invalidateQueries({ queryKey: ["completed-lessons", userId] });
+      queryClient.invalidateQueries({ queryKey: ["progress", userId] });
     },
   });
   const saveButtonDisabled = saveMutation.isPending || saveDisabledNoChanges;
@@ -1004,10 +1008,10 @@ export function LabPage(): JSX.Element {
             targetHandle,
             className: "lab-edge-inflow",
             label: "+",
-            style: { stroke: "#22c55e", strokeWidth: 2.2 },
-            labelStyle: { fill: "#22c55e", fontWeight: 700 },
-            labelBgStyle: { fill: "#050505" },
-            markerEnd: { type: MarkerType.ArrowClosed, color: "#22c55e" },
+            style: { stroke: labColorTokens.inflow, strokeWidth: 2.2 },
+            labelStyle: { fill: labColorTokens.inflow, fontWeight: 700 },
+            labelBgStyle: { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark },
+            markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.inflow },
             data: { ...(edge.data ?? {}), kind: "inflow", weight: 1 },
           };
         }
@@ -1018,16 +1022,16 @@ export function LabPage(): JSX.Element {
             targetHandle,
             className: "lab-edge-outflow",
             label: "-",
-            style: { stroke: "#ef4444", strokeWidth: 2.2 },
-            labelStyle: { fill: "#ef4444", fontWeight: 700 },
-            labelBgStyle: { fill: "#050505" },
-            markerEnd: { type: MarkerType.ArrowClosed, color: "#ef4444" },
+            style: { stroke: labColorTokens.outflow, strokeWidth: 2.2 },
+            labelStyle: { fill: labColorTokens.outflow, fontWeight: 700 },
+            labelBgStyle: { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark },
+            markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.outflow },
             data: { ...(edge.data ?? {}), kind: "outflow", weight: -1 },
           };
         }
         const reinforcingPolarity = String(edge.data?.reinforcingPolarity ?? "");
         if (edge.data?.feedbackLoopType === "reinforcing" && (reinforcingPolarity === "positive" || reinforcingPolarity === "negative")) {
-          const color = reinforcingPolarity === "positive" ? "#22c55e" : "#ef4444";
+          const color = labColorTokens.reinforcing[reinforcingPolarity];
           return {
             ...edge,
             sourceHandle,
@@ -1036,7 +1040,7 @@ export function LabPage(): JSX.Element {
             label: String(edge.label ?? ""),
             style: { stroke: color, strokeWidth: 2.1 },
             labelStyle: { fill: color, fontWeight: 700 },
-            labelBgStyle: { fill: "#050505" },
+            labelBgStyle: { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark },
             markerEnd: { type: MarkerType.ArrowClosed, color },
             data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
           };
@@ -1047,7 +1051,7 @@ export function LabPage(): JSX.Element {
         if (isControl) {
           const opRaw = String(edge.data?.op ?? "add");
           const op: ControlOp = CONTROL_OPS.some((item) => item.value === opRaw) ? (opRaw as ControlOp) : "add";
-          const color = controlEdgeColor(op);
+          const color = controlEdgeColor(op, labColorTokens);
           return {
             ...edge,
             sourceHandle,
@@ -1056,7 +1060,7 @@ export function LabPage(): JSX.Element {
             label: opRaw ? CONTROL_OPS.find((item) => item.value === op)?.label ?? String(edge.label ?? "") : String(edge.label ?? ""),
             style: { stroke: color, strokeWidth: 2.1 },
             labelStyle: { fill: color, fontWeight: 700 },
-            labelBgStyle: { fill: "#050505" },
+            labelBgStyle: { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark },
             markerEnd: { type: MarkerType.ArrowClosed, color },
             data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
           };
@@ -1067,16 +1071,16 @@ export function LabPage(): JSX.Element {
           targetHandle,
           className: "lab-edge-neutral",
           label: String(edge.label ?? ""),
-          style: { stroke: "#6b7280", strokeWidth: 2 },
-          labelStyle: { fill: "#a3a3a3", fontWeight: 600 },
-          labelBgStyle: { fill: "#050505" },
-          markerEnd: { type: MarkerType.ArrowClosed, color: "#6b7280" },
+          style: { stroke: labColorTokens.neutral, strokeWidth: 2 },
+          labelStyle: { fill: labColorTokens.neutralLabel, fontWeight: 600 },
+          labelBgStyle: { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark },
+          markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.neutral },
           data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
         };
       });
       return baseEdges;
     },
-    [edges, nodesById],
+    [edges, isLightTheme, labColorTokens, nodesById],
   );
 
   function valueOfNode(
@@ -1762,43 +1766,48 @@ export function LabPage(): JSX.Element {
         target?.tagName === "TEXTAREA" ||
         target?.tagName === "SELECT" ||
         Boolean(target?.isContentEditable);
-      if (!event.ctrlKey && !event.metaKey && !isTextInput && (event.key === "Delete" || event.key === "Backspace")) {
+      if (!isTextInput && matchesShortcutEvent(event, shortcutBindings.delete_selection)) {
         event.preventDefault();
         deleteSelection();
         return;
       }
-      const isModifier = event.ctrlKey || event.metaKey;
-      if (!isModifier) return;
-      const key = event.key.toLowerCase();
-      if (isTextInput && key !== "s") return;
-      if (key === "s") {
+      if (matchesShortcutEvent(event, shortcutBindings.save_system)) {
         event.preventDefault();
         handleSaveSystem();
         return;
       }
-      if (key === "z") {
+      if (isTextInput) return;
+      if (matchesShortcutEvent(event, shortcutBindings.undo_graph)) {
         event.preventDefault();
         undoGraph();
         return;
       }
-      if (key === "c") {
+      if (matchesShortcutEvent(event, shortcutBindings.copy_selection)) {
         event.preventDefault();
         copySelection();
         return;
       }
-      if (key === "x") {
+      if (matchesShortcutEvent(event, shortcutBindings.cut_selection)) {
         event.preventDefault();
         cutSelection();
         return;
       }
-      if (key === "v") {
+      if (matchesShortcutEvent(event, shortcutBindings.paste_selection)) {
         event.preventDefault();
         pasteSelection();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, [
+    copySelection,
+    cutSelection,
+    deleteSelection,
+    handleSaveSystem,
+    pasteSelection,
+    shortcutBindings,
+    undoGraph,
+  ]);
 
   const handleSelectionChange = useCallback(
     ({ nodes: selectedNodes, edges: selectedEdges }: { nodes: Node[]; edges: Edge[] }) => {
@@ -2201,7 +2210,7 @@ export function LabPage(): JSX.Element {
                 </button>
                 <div className="text-xs lab-field">Stock color</div>
                 <div className="lab-stock-palette">
-                  {STOCK_COLOR_PRESETS.map((color) => (
+                  {stockColorPresets.map((color) => (
                     <button
                       key={color}
                       type="button"
@@ -2215,7 +2224,7 @@ export function LabPage(): JSX.Element {
                   <input
                     className="lab-stock-color-picker"
                     type="color"
-                    value={String(selectedNode.data?.color ?? STOCK_COLOR_PRESETS[0])}
+                    value={resolveStockColor(String(selectedNode.data?.color ?? stockColorPresets[0]), colorblindMode)}
                     onChange={(e) => updateSelectedNode({ color: e.target.value })}
                     aria-label="Pick stock color"
                   />

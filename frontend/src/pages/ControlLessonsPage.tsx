@@ -766,7 +766,7 @@ export function ControlLessonsPage(): JSX.Element {
 
   if (isInitialLoading) {
     return (
-      <section className="panel p-4">
+      <section className="panel control-panel p-4">
         <p className="text-sm text-slate-500">Loading sections...</p>
       </section>
     );
@@ -774,19 +774,19 @@ export function ControlLessonsPage(): JSX.Element {
 
   if (hasInitialError) {
     return (
-      <section className="panel p-4">
+      <section className="panel control-panel p-4">
         <p className="text-sm text-red-600">Failed to load control data.</p>
       </section>
     );
   }
 
   return (
-    <section className="space-y-4">
-      <div className="panel space-y-4 p-4">
+    <section className="control-content space-y-4">
+      <div className="panel control-panel space-y-4 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold">Sections</h3>
-            <p className="text-sm text-slate-500">Manage sections, lessons and tasks from one place.</p>
+            <h3 className="control-section-heading text-lg font-semibold">Sections</h3>
+            <p className="control-copy text-sm text-slate-500">Manage sections, lessons and tasks from one place.</p>
           </div>
           <button className="btn-primary" type="button" onClick={openSectionCreate}>
             Add section
@@ -888,7 +888,7 @@ function ControlModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6" onClick={onClose}>
       <div
-        className="panel max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl p-5 sm:p-6"
+        className="panel control-panel control-modal-panel max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl p-5 sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-3">
@@ -899,9 +899,9 @@ function ControlModal({
                   Back
                 </button>
               ) : null}
-              <h3 className="text-xl font-semibold">{title}</h3>
+              <h3 className="control-section-heading text-xl font-semibold">{title}</h3>
             </div>
-            {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
+            {subtitle ? <p className="control-copy text-sm text-slate-500">{subtitle}</p> : null}
           </div>
           <button className="btn-secondary" type="button" onClick={onClose}>
             Close

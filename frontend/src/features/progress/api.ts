@@ -1,5 +1,10 @@
 import { api } from "../../lib/api";
-import { CompletedLesson } from "../../types/api";
+import { CompletedLesson, ProgressSummary } from "../../types/api";
+
+export async function fetchProgressSummary(): Promise<ProgressSummary> {
+  const { data } = await api.get<ProgressSummary>("/progress");
+  return data;
+}
 
 export async function fetchCompletedLessons(): Promise<CompletedLesson[]> {
   const { data } = await api.get<CompletedLesson[]>("/progress/completed");

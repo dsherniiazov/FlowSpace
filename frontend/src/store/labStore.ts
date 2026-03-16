@@ -10,6 +10,7 @@ import {
   NodeChange,
 } from "reactflow";
 import { RunStep } from "../types/api";
+import { getCurrentLabColorTokens, getStockColorPresets } from "./uiPreferencesStore";
 
 export type BoundaryType = "upper" | "lower";
 export type LoopOperation = "add" | "sub";
@@ -157,8 +158,6 @@ type ControlOp =
   | "pow"
   | "mod";
 const CONTROL_OPS: ControlOp[] = ["add", "sub", "mul", "div", "pow", "mod"];
-
-export const STOCK_COLOR_PRESETS = ["#ef4444", "#f97316", "#22c55e", "#0ea5e9", "#3b82f6", "#a855f7"];
 
 function nodeKind(node: Node | undefined): NodeKind {
   if (!node) return "other";
@@ -402,26 +401,29 @@ function parseLoopRecord(item: Record<string, unknown>): FeedbackLoop | null {
   };
 }
 
-const initialNodes: Node[] = [
-  {
-    id: "stock_1",
-    type: "stockNode",
-    position: { x: 260, y: 180 },
-    data: { label: "Stock A", quantity: 100, unit: "", color: STOCK_COLOR_PRESETS[0] },
-  },
-  {
-    id: "stock_2",
-    type: "stockNode",
-    position: { x: 560, y: 250 },
-    data: { label: "Stock B", quantity: 50, unit: "", color: STOCK_COLOR_PRESETS[1] },
-  },
-  {
-    id: "flow_1",
-    type: "flowNode",
-    position: { x: 420, y: 130 },
-    data: { label: "Flow 1", bottleneck: 10, unit: "" },
-  },
-];
+function buildInitialNodes(): Node[] {
+  const stockColorPresets = getStockColorPresets();
+  return [
+    {
+      id: "stock_1",
+      type: "stockNode",
+      position: { x: 260, y: 180 },
+      data: { label: "Stock A", quantity: 100, unit: "", color: stockColorPresets[0] },
+    },
+    {
+      id: "stock_2",
+      type: "stockNode",
+      position: { x: 560, y: 250 },
+      data: { label: "Stock B", quantity: 50, unit: "", color: stockColorPresets[1] ?? stockColorPresets[0] },
+    },
+    {
+      id: "flow_1",
+      type: "flowNode",
+      position: { x: 420, y: 130 },
+      data: { label: "Flow 1", bottleneck: 10, unit: "" },
+    },
+  ];
+}
 
 const initialEdges: Edge[] = [
   { id: "edge_1", source: "stock_1", target: "flow_1", label: "-", data: { kind: "outflow", weight: -1 } },
@@ -429,7 +431,7 @@ const initialEdges: Edge[] = [
 ];
 
 export const useLabStore = create<LabState>((set, get) => ({
-  nodes: initialNodes,
+  nodes: buildInitialNodes(),
   edges: initialEdges,
   feedbackLoops: [],
   activeSystemId: null,
@@ -597,7 +599,8 @@ export const useLabStore = create<LabState>((set, get) => ({
     if (get().lockEditing) return;
     const id = nextNodeId(get().nodes, "stock");
     const index = get().nodes.filter((node) => node.id.startsWith("stock_")).length + 1;
-    const color = STOCK_COLOR_PRESETS[(index - 1) % STOCK_COLOR_PRESETS.length];
+    const stockColorPresets = getStockColorPresets();
+    const color = stockColorPresets[(index - 1) % stockColorPresets.length];
     set({
       nodes: [
         ...get().nodes,
@@ -972,7 +975,7 @@ export const useLabStore = create<LabState>((set, get) => ({
           },
         };
 
-    const color = polarity === "positive" ? "#22c55e" : "#ef4444";
+    const color = getCurrentLabColorTokens().reinforcing[polarity];
 
     const edgeStockToMultiplier: Edge = {
       id: generateEdgeId(currentEdges),
@@ -1359,7 +1362,7 @@ export const useLabStore = create<LabState>((set, get) => ({
 
   resetToInitialGraph: () =>
     set({
-      nodes: initialNodes.map((node) => ({
+      nodes: buildInitialNodes().map((node) => ({
         ...node,
         position: { ...node.position },
         data: { ...(node.data ?? {}) },

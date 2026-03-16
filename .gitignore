@@ -3,6 +3,13 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+.idea
+.DS_Store
+.vscode
+docs
+files
+.idea
+
 # C extensions
 *.so
 

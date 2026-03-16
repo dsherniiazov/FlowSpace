@@ -18,8 +18,8 @@ export function ControlUsersPage(): JSX.Element {
   });
 
   return (
-    <div className="panel p-4">
-      <h3 className="mb-3 text-lg font-medium">Users</h3>
+    <div className="panel control-panel p-4">
+      <h3 className="control-section-heading mb-3 text-lg font-medium">Users</h3>
       {usersQuery.isLoading ? <div>Loading users...</div> : null}
       {usersQuery.isError ? <div className="text-zinc-400">Failed to load users</div> : null}
       <div className="space-y-2">
@@ -28,18 +28,18 @@ export function ControlUsersPage(): JSX.Element {
           const avatarUrl = getAvatarUrl(user.avatar_path);
           const initials = `${user.name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U";
           return (
-            <div key={user.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
+            <div key={user.id} className="control-user-card flex items-center justify-between rounded-md border border-slate-200 p-3">
               <div className="flex items-center gap-3">
                 <div className="user-chip-avatar">
-                  {avatarUrl ? <img src={avatarUrl} alt={`${user.email} avatar`} className="h-full w-full rounded-[inherit] object-cover" /> : initials}
+                  {avatarUrl ? <img src={avatarUrl} alt={`${user.email} avatar`} className="block h-full w-full rounded-full object-cover" /> : initials}
                 </div>
                 <div>
-                <div className="font-medium">{user.name} {user.last_name}</div>
-                <div className="text-xs text-slate-500">{user.email}</div>
+                <div className="control-user-title font-medium">{user.name} {user.last_name}</div>
+                <div className="control-user-copy text-xs text-slate-500">{user.email}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs">{isSelf ? "you" : user.is_admin ? "admin" : "user"}</span>
+                <span className="control-user-copy text-xs">{isSelf ? "you" : user.is_admin ? "admin" : "user"}</span>
                 {!isSelf ? (
                   <>
                     <button

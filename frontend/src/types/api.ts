@@ -78,6 +78,15 @@ export type CompletedLesson = {
   completed_at: string;
 };
 
+export type ProgressSummary = {
+  user_id: number;
+  total_tasks: number;
+  completed_tasks: number;
+  total_lessons: number;
+  completed_lessons: number;
+  progress_percent: number;
+};
+
 export type LessonTask = {
   id: number;
   lesson_id: number;

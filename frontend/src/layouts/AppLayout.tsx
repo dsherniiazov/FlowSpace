@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { fetchLessons } from "../features/lessons/api";
 import { fetchLessonTasks } from "../features/lessonTasks/api";
@@ -18,6 +18,7 @@ export type AppLayoutOutletContext = {
 
 export function AppLayout(): JSX.Element {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const clearSession = useAuthStore((state) => state.clearSession);
   const email = useAuthStore((state) => state.email);
   const isAdmin = useAuthStore((state) => state.isAdmin);
@@ -42,7 +43,11 @@ export function AppLayout(): JSX.Element {
   const lessonsQuery = useQuery({ queryKey: ["lessons"], queryFn: fetchLessons, enabled: isLessonFocusMode });
   const sectionsQuery = useQuery({ queryKey: ["sections"], queryFn: fetchSections, enabled: isLessonFocusMode });
   const tasksQuery = useQuery({ queryKey: ["lesson-tasks"], queryFn: () => fetchLessonTasks(), enabled: isLessonFocusMode });
-  const completedTasksQuery = useQuery({ queryKey: ["completed-tasks"], queryFn: fetchCompletedTasks, enabled: isLessonFocusMode });
+  const completedTasksQuery = useQuery({
+    queryKey: ["completed-tasks", userId],
+    queryFn: fetchCompletedTasks,
+    enabled: isLessonFocusMode && !!userId,
+  });
   const currentUserQuery = useQuery({
     queryKey: ["sidebar-user", userId],
     queryFn: async () => {
@@ -161,7 +166,7 @@ export function AppLayout(): JSX.Element {
         <div className="app-sidebar-footer">
           <button className="user-chip" onClick={() => navigate("/app/profile")}>
             <div className="user-chip-avatar">
-              {sidebarAvatarUrl ? <img src={sidebarAvatarUrl} alt="Profile avatar" className="h-full w-full rounded-[inherit] object-cover" /> : sidebarInitial}
+              {sidebarAvatarUrl ? <img src={sidebarAvatarUrl} alt="Profile avatar" className="block h-full w-full rounded-full object-cover" /> : sidebarInitial}
             </div>
             <div className="user-chip-meta">
               <div className="user-chip-title">{isAdmin ? "Administrator" : "Student"}</div>
@@ -183,6 +188,19 @@ export function AppLayout(): JSX.Element {
             )}
             {lessonHeader ? <div className="app-breadcrumbs">{lessonHeader}</div> : <div />}
             <div className="flex items-center gap-2">
+              <NavLink
+                to="/app/settings"
+                className={({ isActive }) => `theme-toggle settings-toggle ${isActive ? "is-active" : ""}`}
+                aria-label="Open settings"
+                title="Settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.63l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.05 7.05 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.63l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.63l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.63l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+                  />
+                </svg>
+              </NavLink>
               <button
                 className="theme-toggle"
                 aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -196,6 +214,7 @@ export function AppLayout(): JSX.Element {
               <button
                 className="btn-secondary"
                 onClick={() => {
+                  queryClient.clear();
                   clearSession();
                   navigate("/");
                 }}

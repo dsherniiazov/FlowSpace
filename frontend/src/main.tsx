@@ -3,7 +3,10 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router-dom";
 import { appRouter } from "./app/router";
+import { applyUiPreferencesToDocument, getStoredUiPreferences } from "./store/uiPreferencesStore";
 import "./styles.css";
+
+applyUiPreferencesToDocument(getStoredUiPreferences());
 
 const savedTheme = localStorage.getItem("flowspace-theme");
 const initialTheme =

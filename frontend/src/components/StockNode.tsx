@@ -1,5 +1,6 @@
 import { CSSProperties } from "react";
 import { Handle, NodeProps, Position } from "reactflow";
+import { resolveStockColor, useUiPreferencesStore } from "../store/uiPreferencesStore";
 
 function formatQuantity(value: unknown): string {
   const num = Number(value ?? 0);
@@ -11,7 +12,8 @@ export function StockNode({ data }: NodeProps): JSX.Element {
   const label = String(data?.label ?? "Stock");
   const quantity = String(data?.displayQuantity ?? formatQuantity(data?.quantity));
   const unit = String(data?.unit ?? "").trim();
-  const color = String(data?.color ?? "#3b82f6");
+  const colorblindMode = useUiPreferencesStore((state) => state.colorblindMode);
+  const color = resolveStockColor(String(data?.color ?? "#3b82f6"), colorblindMode);
   const stockStyle = { borderColor: color, "--stock-color": color } as CSSProperties;
 
   return (

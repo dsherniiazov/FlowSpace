@@ -5,17 +5,18 @@ export function FlowNode({ data }: NodeProps): JSX.Element {
   const bottleneck = Number(data?.bottleneck ?? data?.quantity ?? 0);
   const bottleneckDisplay = String(data?.displayBottleneck ?? (Number.isFinite(bottleneck) ? bottleneck : 0));
   const unit = String(data?.unit ?? "").trim();
+  const accent = "var(--lab-flow-accent)";
 
   return (
     <div className="lab-flow-node">
-      <Handle id="target-left" type="target" position={Position.Left} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="source-left" type="source" position={Position.Left} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="target-right" type="target" position={Position.Right} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="source-right" type="source" position={Position.Right} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="target-top" type="target" position={Position.Top} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="source-top" type="source" position={Position.Top} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="target-bottom" type="target" position={Position.Bottom} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
-      <Handle id="source-bottom" type="source" position={Position.Bottom} style={{ background: "#3b82f6", borderColor: "#3b82f6" }} />
+      <Handle id="target-left" type="target" position={Position.Left} style={{ background: accent, borderColor: accent }} />
+      <Handle id="source-left" type="source" position={Position.Left} style={{ background: accent, borderColor: accent }} />
+      <Handle id="target-right" type="target" position={Position.Right} style={{ background: accent, borderColor: accent }} />
+      <Handle id="source-right" type="source" position={Position.Right} style={{ background: accent, borderColor: accent }} />
+      <Handle id="target-top" type="target" position={Position.Top} style={{ background: accent, borderColor: accent }} />
+      <Handle id="source-top" type="source" position={Position.Top} style={{ background: accent, borderColor: accent }} />
+      <Handle id="target-bottom" type="target" position={Position.Bottom} style={{ background: accent, borderColor: accent }} />
+      <Handle id="source-bottom" type="source" position={Position.Bottom} style={{ background: accent, borderColor: accent }} />
       <div className="lab-node-content">
         <span className="lab-flow-node-title">{label}</span>
         <span className="lab-node-meta">

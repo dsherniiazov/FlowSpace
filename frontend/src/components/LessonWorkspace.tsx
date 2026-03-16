@@ -8,6 +8,7 @@ import { fetchLessonTasks } from "../features/lessonTasks/api";
 import { fetchSections } from "../features/sections/api";
 import { fetchCompletedTasks } from "../features/taskProgress/api";
 import { AppLayoutOutletContext } from "../layouts/AppLayout";
+import { useAuthStore } from "../store/authStore";
 import { Lesson, LessonTask, Section } from "../types/api";
 import { CSSProperties } from "react";
 
@@ -22,12 +23,17 @@ const UNASSIGNED_SECTION_ID = -1;
 export function LessonWorkspace({ layoutContext, initialLessonId = null, fullPage = false }: Props): JSX.Element {
   const { setLessonHeader } = layoutContext;
   const navigate = useNavigate();
+  const userId = useAuthStore((state) => state.userId);
   const [selectedLessonId, setSelectedLessonId] = useState<number | null>(initialLessonId);
 
   const lessonsQuery = useQuery({ queryKey: ["lessons"], queryFn: fetchLessons });
   const sectionsQuery = useQuery({ queryKey: ["sections"], queryFn: fetchSections });
   const tasksQuery = useQuery({ queryKey: ["lesson-tasks"], queryFn: () => fetchLessonTasks() });
-  const completedTasksQuery = useQuery({ queryKey: ["completed-tasks"], queryFn: fetchCompletedTasks });
+  const completedTasksQuery = useQuery({
+    queryKey: ["completed-tasks", userId],
+    queryFn: fetchCompletedTasks,
+    enabled: !!userId,
+  });
 
   const lessons: Lesson[] = useMemo(
     () =>

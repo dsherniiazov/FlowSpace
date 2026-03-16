@@ -5,6 +5,7 @@ import {
   LoopOperation,
   ReinforcingPolarity,
 } from "../store/labStore";
+import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
 
 export type ConnectedFlowOption = {
   id: string;
@@ -70,6 +71,7 @@ export function FeedbackLoopModal({
   onSubmitBalancingLoop,
   onSubmitReinforcingLoop,
 }: FeedbackLoopModalProps): JSX.Element | null {
+  const closeDialogShortcut = useShortcutStore((state) => state.bindings.close_dialog);
   const [activeTab, setActiveTab] = useState<"balancing" | "reinforcing">("balancing");
   const [boundaryType, setBoundaryType] = useState<BoundaryType>("upper");
   const [goalValueInput, setGoalValueInput] = useState("0");
@@ -118,11 +120,14 @@ export function FeedbackLoopModal({
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (matchesShortcutEvent(event, closeDialogShortcut)) {
+        event.preventDefault();
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, onClose]);
+  }, [closeDialogShortcut, isOpen, onClose]);
 
   const connectedFlowLookup = useMemo(() => new Set(connectedFlows.map((flow) => flow.id)), [connectedFlows]);
 

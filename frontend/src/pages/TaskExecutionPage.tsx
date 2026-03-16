@@ -7,6 +7,7 @@ import { fetchLessonTask, startLessonTask } from "../features/lessonTasks/api";
 import { fetchSections } from "../features/sections/api";
 import { completeTask, fetchCompletedTasks, uncompleteTask } from "../features/taskProgress/api";
 import { AppLayoutOutletContext } from "../layouts/AppLayout";
+import { useAuthStore } from "../store/authStore";
 import { useLabStore } from "../store/labStore";
 
 export function TaskExecutionPage(): JSX.Element {
@@ -15,6 +16,7 @@ export function TaskExecutionPage(): JSX.Element {
   const { setLessonHeader } = useOutletContext<AppLayoutOutletContext>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const userId = useAuthStore((state) => state.userId);
   const loadGraphJson = useLabStore((state) => state.loadGraphJson);
   const setActiveSystemId = useLabStore((state) => state.setActiveSystemId);
 
@@ -25,14 +27,19 @@ export function TaskExecutionPage(): JSX.Element {
   });
   const lessonsQuery = useQuery({ queryKey: ["lessons"], queryFn: fetchLessons });
   const sectionsQuery = useQuery({ queryKey: ["sections"], queryFn: fetchSections });
-  const completedTasksQuery = useQuery({ queryKey: ["completed-tasks"], queryFn: fetchCompletedTasks });
+  const completedTasksQuery = useQuery({
+    queryKey: ["completed-tasks", userId],
+    queryFn: fetchCompletedTasks,
+    enabled: !!userId,
+  });
 
   const toggleTaskMutation = useMutation({
     mutationFn: async (payload: { taskId: number; completed: boolean }) =>
       payload.completed ? uncompleteTask(payload.taskId) : completeTask(payload.taskId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["completed-tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["completed-lessons"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-tasks", userId] });
+      queryClient.invalidateQueries({ queryKey: ["completed-lessons", userId] });
+      queryClient.invalidateQueries({ queryKey: ["progress", userId] });
     },
   });
   const startTaskMutation = useMutation({

@@ -11,6 +11,7 @@ import { LoginPage } from "../pages/LoginPage";
 import { OAuthCallbackPage } from "../pages/OAuthCallbackPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
+import { SettingsPage } from "../pages/SettingsPage";
 import { TaskExecutionPage } from "../pages/TaskExecutionPage";
 import { useAuthStore } from "../store/authStore";
 
@@ -44,6 +45,7 @@ export const appRouter = createBrowserRouter([
       { path: "lessons/:lessonId", element: <LessonDetailPage /> },
       { path: "tasks/:taskId", element: <TaskExecutionPage /> },
       { path: "profile", element: <ProfilePage /> },
+      { path: "settings", element: <SettingsPage /> },
       { path: "lab", element: <LabPage /> },
       { path: "my-systems", element: <Navigate to="/app/profile" replace /> },
       {
