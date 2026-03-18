@@ -136,6 +136,11 @@ type LabState = {
   addFlow: () => void;
   addConstant: () => void;
   addVariable: () => void;
+  addNodeAtPosition: (
+    type: "stock" | "flow" | "commentNode",
+    position: { x: number; y: number },
+    extraData?: Record<string, unknown>,
+  ) => string;
   createBalancingFeedbackLoop: (payload: CreateBalancingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
   createReinforcingFeedbackLoop: (payload: CreateReinforcingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
   updateBalancingFeedbackLoop: (payload: UpdateBalancingFeedbackLoopPayload) => CreateBalancingFeedbackLoopResult;
@@ -663,6 +668,47 @@ export const useLabStore = create<LabState>((set, get) => ({
         },
       ],
     });
+  },
+
+  addNodeAtPosition: (type, position, extraData) => {
+    if (get().lockEditing) return "";
+    const nodes = get().nodes;
+    let id: string;
+    let nodeData: Record<string, unknown>;
+    if (type === "stock") {
+      id = nextNodeId(nodes, "stock");
+      const index = nodes.filter((node) => node.id.startsWith("stock_")).length + 1;
+      const stockColorPresets = getStockColorPresets();
+      const color = stockColorPresets[(index - 1) % stockColorPresets.length];
+      nodeData = { label: `Stock ${index}`, quantity: 0, unit: "", color, ...extraData };
+    } else if (type === "flow") {
+      id = nextNodeId(nodes, "flow");
+      const index = nodes.filter((node) => node.id.startsWith("flow_")).length + 1;
+      nodeData = { label: `Flow ${index}`, bottleneck: 0, unit: "", ...extraData };
+    } else {
+      // commentNode
+      const existing = new Set(nodes.map((node) => String(node.id)));
+      let index = nodes.filter((node) => String(node.id).startsWith("comment_")).length + 1;
+      let candidate = `comment_${index}`;
+      while (existing.has(candidate)) {
+        index += 1;
+        candidate = `comment_${index}`;
+      }
+      id = candidate;
+      nodeData = { text: "", authorId: 0, authorName: "", authorEmail: "", ...extraData };
+    }
+    set({
+      nodes: [
+        ...nodes,
+        {
+          id,
+          type: type === "stock" ? "stockNode" : type === "flow" ? "flowNode" : "commentNode",
+          position,
+          data: nodeData,
+        },
+      ],
+    });
+    return id;
   },
 
   createBalancingFeedbackLoop: (payload) => {
@@ -1389,28 +1435,43 @@ export const useLabStore = create<LabState>((set, get) => ({
     }),
 
   toGraphJson: () => {
-    const nodes = get().nodes.map((node) => ({
-      id: node.id,
-      kind: String(node.type ?? "default"),
-      x: Number(node.position.x ?? 0),
-      y: Number(node.position.y ?? 0),
-      initial: nodeKind(node) === "flow" ? clampFlowNonNegative(node.data?.quantity ?? node.data?.initial ?? 0) : Number(node.data?.quantity ?? node.data?.initial ?? 0),
-      quantity: nodeKind(node) === "flow" ? clampFlowNonNegative(node.data?.quantity ?? node.data?.initial ?? 0) : Number(node.data?.quantity ?? node.data?.initial ?? 0),
-      bottleneck: clampFlowNonNegative(node.data?.bottleneck ?? node.data?.quantity ?? node.data?.initial ?? 0),
-      expression: String(node.data?.expression ?? ""),
-      base_flow_expression: String(node.data?.baseFlowExpression ?? ""),
-      loop_id: String(node.data?.loopId ?? ""),
-      loop_role: String(node.data?.loopRole ?? ""),
-      feedback_loop_type: String(node.data?.feedbackLoopType ?? ""),
-      feedback_loop_persistent: Boolean(node.data?.feedbackLoopPersistent),
-      reinforcing_text_only: Boolean(node.data?.reinforcingTextOnly),
-      reinforcing_marker: Boolean(node.data?.reinforcingMarker),
-      unit: String(node.data?.unit ?? ""),
-      color: String(node.data?.color ?? ""),
-      decay: 0,
-      bias: 0,
-      label: String(node.data?.label ?? node.id),
-    }));
+    const nodes = get().nodes.map((node) => {
+      if (node.type === "commentNode") {
+        return {
+          id: node.id,
+          kind: "commentNode",
+          x: Number(node.position.x ?? 0),
+          y: Number(node.position.y ?? 0),
+          comment_text: String(node.data?.text ?? ""),
+          author_id: Number(node.data?.authorId ?? 0),
+          author_name: String(node.data?.authorName ?? ""),
+          author_email: String(node.data?.authorEmail ?? ""),
+          author_avatar_path: node.data?.authorAvatarPath ?? null,
+        };
+      }
+      return {
+        id: node.id,
+        kind: String(node.type ?? "default"),
+        x: Number(node.position.x ?? 0),
+        y: Number(node.position.y ?? 0),
+        initial: nodeKind(node) === "flow" ? clampFlowNonNegative(node.data?.quantity ?? node.data?.initial ?? 0) : Number(node.data?.quantity ?? node.data?.initial ?? 0),
+        quantity: nodeKind(node) === "flow" ? clampFlowNonNegative(node.data?.quantity ?? node.data?.initial ?? 0) : Number(node.data?.quantity ?? node.data?.initial ?? 0),
+        bottleneck: clampFlowNonNegative(node.data?.bottleneck ?? node.data?.quantity ?? node.data?.initial ?? 0),
+        expression: String(node.data?.expression ?? ""),
+        base_flow_expression: String(node.data?.baseFlowExpression ?? ""),
+        loop_id: String(node.data?.loopId ?? ""),
+        loop_role: String(node.data?.loopRole ?? ""),
+        feedback_loop_type: String(node.data?.feedbackLoopType ?? ""),
+        feedback_loop_persistent: Boolean(node.data?.feedbackLoopPersistent),
+        reinforcing_text_only: Boolean(node.data?.reinforcingTextOnly),
+        reinforcing_marker: Boolean(node.data?.reinforcingMarker),
+        unit: String(node.data?.unit ?? ""),
+        color: String(node.data?.color ?? ""),
+        decay: 0,
+        bias: 0,
+        label: String(node.data?.label ?? node.id),
+      };
+    });
     const edges = get().edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
@@ -1437,12 +1498,30 @@ export const useLabStore = create<LabState>((set, get) => ({
     const rawEdges = Array.isArray(graph.edges) ? (graph.edges as Array<Record<string, unknown>>) : [];
 
     const nodes: Node[] = rawNodes.map((item, index) => {
+      const kindStr = String(item.kind ?? "stockNode");
+      if (kindStr === "commentNode") {
+        return {
+          id: String(item.id ?? `comment_${index + 1}`),
+          type: "commentNode",
+          position: {
+            x: Number(item.x ?? 160 + index * 40),
+            y: Number(item.y ?? 140 + index * 30),
+          },
+          data: {
+            text: String(item.comment_text ?? ""),
+            authorId: Number(item.author_id ?? 0),
+            authorName: String(item.author_name ?? ""),
+            authorEmail: String(item.author_email ?? ""),
+            authorAvatarPath: item.author_avatar_path ?? null,
+          },
+        };
+      }
       const type =
-        String(item.kind ?? "stockNode") === "flowNode"
+        kindStr === "flowNode"
           ? "flowNode"
-          : String(item.kind ?? "stockNode") === "constantNode"
+          : kindStr === "constantNode"
             ? "constantNode"
-            : String(item.kind ?? "stockNode") === "variableNode"
+            : kindStr === "variableNode"
               ? "variableNode"
               : "stockNode";
       const isFlow = type === "flowNode";

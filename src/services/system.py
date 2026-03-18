@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from src.models.systems import SystemModel
+from src.models.users import User
 
 
 class SystemNotFoundError(ValueError):
@@ -160,6 +161,52 @@ class SystemModelService:
             db.rollback()
             raise
         return model
+
+    @staticmethod
+    def submit_for_review(db: Session, model_id: int) -> SystemModel:
+        model = SystemModelService.get(db, model_id)
+        model.is_submitted_for_review = True
+        try:
+            db.commit()
+            db.refresh(model)
+        except Exception:
+            db.rollback()
+            raise
+        return model
+
+    @staticmethod
+    def mark_changes_seen(db: Session, model_id: int) -> SystemModel:
+        model = SystemModelService.get(db, model_id)
+        model.has_unseen_changes = False
+        try:
+            db.commit()
+            db.refresh(model)
+        except Exception:
+            db.rollback()
+            raise
+        return model
+
+    @staticmethod
+    def mark_reviewed(db: Session, model_id: int) -> SystemModel:
+        model = SystemModelService.get(db, model_id)
+        model.is_submitted_for_review = False
+        try:
+            db.commit()
+            db.refresh(model)
+        except Exception:
+            db.rollback()
+            raise
+        return model
+
+    @staticmethod
+    def list_pending_review(db: Session) -> list[tuple[SystemModel, User | None]]:
+        rows = (
+            db.query(SystemModel, User)
+            .outerjoin(User, SystemModel.owner_id == User.id)
+            .filter(SystemModel.is_submitted_for_review == True)  # noqa: E712
+            .all()
+        )
+        return rows
 
     @staticmethod
     def get_or_create_user_copy_from_template(db: Session, template_id: int, user_id: int) -> SystemModel:

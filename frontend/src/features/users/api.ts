@@ -7,6 +7,11 @@ export async function fetchUsers(): Promise<UserPublic[]> {
   return data;
 }
 
+export async function fetchUserById(userId: number): Promise<UserPublic> {
+  const { data } = await api.get<UserPublic>(`/users/${userId}`);
+  return data;
+}
+
 export async function setUserAdmin(userId: number, isAdmin: boolean): Promise<UserPublic> {
   const { data } = await api.patch<UserPublic>(`/users/${userId}/admin`, { is_admin: isAdmin });
   return data;

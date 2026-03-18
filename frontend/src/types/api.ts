@@ -40,7 +40,14 @@ export type SystemModel = {
   graph_json: Record<string, unknown>;
   is_public?: boolean | null;
   is_template?: boolean | null;
+  is_submitted_for_review?: boolean;
+  has_unseen_changes?: boolean;
   created_at?: string | null;
+};
+
+export type SystemWithOwner = SystemModel & {
+  owner_email?: string | null;
+  owner_name?: string | null;
 };
 
 export type RunStep = {

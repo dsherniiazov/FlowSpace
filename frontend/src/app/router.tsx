@@ -3,6 +3,7 @@ import { AppLayout } from "../layouts/AppLayout";
 import { ControlPage } from "../pages/ControlPage";
 import { ControlLessonsPage } from "../pages/ControlLessonsPage";
 import { ControlUsersPage } from "../pages/ControlUsersPage";
+import { PendingReviewPage } from "../pages/PendingReviewPage";
 import { LandingPage } from "../pages/LandingPage";
 import { LabPage } from "../pages/LabPage";
 import { LessonDetailPage } from "../pages/LessonDetailPage";
@@ -48,6 +49,14 @@ export const appRouter = createBrowserRouter([
       { path: "settings", element: <SettingsPage /> },
       { path: "lab", element: <LabPage /> },
       { path: "my-systems", element: <Navigate to="/app/profile" replace /> },
+      {
+        path: "pending-review",
+        element: (
+          <AdminOnly>
+            <PendingReviewPage />
+          </AdminOnly>
+        ),
+      },
       {
         path: "control",
         element: (

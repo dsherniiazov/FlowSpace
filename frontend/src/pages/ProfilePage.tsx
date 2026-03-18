@@ -211,7 +211,10 @@ export function ProfilePage(): JSX.Element {
           {systems.length === 0 && !systemsQuery.isLoading ? <div className="mt-3 text-zinc-500">No systems saved yet.</div> : null}
           <div className="mt-4 grid gap-3">
             {systems.map((system) => (
-              <div key={system.id} className="profile-system-card p-4">
+              <div key={system.id} className="profile-system-card p-4" style={{ position: "relative" }}>
+                {system.has_unseen_changes ? (
+                  <div className="profile-system-new-badge">new changes!</div>
+                ) : null}
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <div className="profile-system-title font-semibold text-zinc-100">{system.title}</div>

@@ -1,5 +1,5 @@
 import { api } from "../../lib/api";
-import { SystemModel } from "../../types/api";
+import { SystemModel, SystemWithOwner } from "../../types/api";
 
 export async function fetchSystems(): Promise<SystemModel[]> {
   const { data } = await api.get<SystemModel[]>("/systems");
@@ -41,5 +41,25 @@ export async function updateSystem(
 
 export async function deleteSystem(systemId: number): Promise<SystemModel> {
   const { data } = await api.delete<SystemModel>(`/systems/${systemId}`);
+  return data;
+}
+
+export async function submitSystemForReview(systemId: number): Promise<SystemModel> {
+  const { data } = await api.post<SystemModel>(`/systems/${systemId}/submit-for-review`);
+  return data;
+}
+
+export async function markSystemChangesSeen(systemId: number): Promise<SystemModel> {
+  const { data } = await api.post<SystemModel>(`/systems/${systemId}/mark-seen`);
+  return data;
+}
+
+export async function fetchPendingReviewSystems(): Promise<SystemWithOwner[]> {
+  const { data } = await api.get<SystemWithOwner[]>("/systems/pending-review");
+  return data;
+}
+
+export async function markSystemReviewed(systemId: number): Promise<SystemModel> {
+  const { data } = await api.post<SystemModel>(`/systems/pending-review/${systemId}/mark-reviewed`);
   return data;
 }

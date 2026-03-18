@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.models.users import User
-from src.schemas.systems import SystemCreate, SystemOut, SystemUpdate
+from src.schemas.systems import SystemCreate, SystemOut, SystemUpdate, SystemWithOwner
 from src.services.system import (
     DuplicateSystemTitleError,
     SystemAccessDeniedError,
@@ -23,6 +23,38 @@ def list_systems(db: Session = Depends(get_db), current_user: User = Depends(get
 @router.get("/public", response_model=list[SystemOut])
 def list_public_systems(db: Session = Depends(get_db)):
     return SystemModelService.list_public(db)
+
+
+@router.post("/pending-review/{system_id}/mark-reviewed", response_model=SystemOut)
+def mark_reviewed(
+    system_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    try:
+        return SystemModelService.mark_reviewed(db, system_id)
+    except SystemNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get("/pending-review", response_model=list[SystemWithOwner])
+def list_pending_review(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    rows = SystemModelService.list_pending_review(db)
+    result = []
+    for model, owner in rows:
+        item = SystemWithOwner.model_validate(model)
+        if owner:
+            item.owner_email = owner.email
+            item.owner_name = f"{owner.name} {owner.last_name}".strip()
+        result.append(item)
+    return result
 
 
 @router.get("/{system_id}", response_model=SystemOut)
@@ -75,6 +107,9 @@ def update_system(
             fields.pop("owner_id", None)
             fields.pop("is_template", None)
             fields.pop("source_system_id", None)
+        # If admin is editing another user's system, flag unseen changes for the owner
+        if current_user.is_admin and model.owner_id is not None and model.owner_id != current_user.id:
+            fields["has_unseen_changes"] = True
         return SystemModelService.update(db, system_id, fields)
     except DuplicateSystemTitleError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -84,6 +119,38 @@ def update_system(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/{system_id}/submit-for-review", response_model=SystemOut)
+def submit_for_review(
+    system_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        model = SystemModelService.get(db, system_id)
+        SystemModelService.ensure_write_access(model, current_user.id, is_admin=bool(current_user.is_admin))
+        return SystemModelService.submit_for_review(db, system_id)
+    except SystemNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SystemAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@router.post("/{system_id}/mark-seen", response_model=SystemOut)
+def mark_changes_seen(
+    system_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        model = SystemModelService.get(db, system_id)
+        SystemModelService.ensure_write_access(model, current_user.id, is_admin=bool(current_user.is_admin))
+        return SystemModelService.mark_changes_seen(db, system_id)
+    except SystemNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SystemAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 
 @router.delete("/{system_id}", response_model=SystemOut)

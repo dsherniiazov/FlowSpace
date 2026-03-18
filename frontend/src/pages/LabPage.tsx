@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactFlow, { Background, BackgroundVariant, Edge, MarkerType, Node, ReactFlowInstance } from "reactflow";
 import { useLocation, useNavigate } from "react-router-dom";
 import "reactflow/dist/style.css";
 
 import { ConstantNode } from "../components/ConstantNode";
+import { CommentNode } from "../components/CommentNode";
 import {
   BalancingSubmitPayload,
   ConnectedFlowOption,
@@ -15,8 +17,9 @@ import { FlowNode } from "../components/FlowNode";
 import { StockNode } from "../components/StockNode";
 import { VariableNode } from "../components/VariableNode";
 import { SimulationChart } from "../components/SimulationChart";
+import { AnimatedParticleEdge } from "../components/AnimatedParticleEdge";
 import { fetchLessonTasks } from "../features/lessonTasks/api";
-import { createSystem, fetchSystems, updateSystem } from "../features/systems/api";
+import { createSystem, fetchSystems, markSystemChangesSeen, submitSystemForReview, updateSystem } from "../features/systems/api";
 import { completeTask, fetchCompletedTasks } from "../features/taskProgress/api";
 import { LessonTask, RunStep, SystemModel } from "../types/api";
 import { useAuthStore } from "../store/authStore";
@@ -54,6 +57,54 @@ const CONTROL_OPS: Array<{ value: ControlOp; label: string }> = [
   { value: "pow", label: "^" },
   { value: "mod", label: "%" },
 ];
+
+function HelpTip({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const ref = useRef<HTMLSpanElement>(null);
+
+  const BUBBLE_W = 234;
+  const MARGIN = 8;
+
+  function show() {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const idealLeft = rect.left + rect.width / 2;
+      const clampedLeft = Math.min(
+        Math.max(idealLeft, MARGIN + BUBBLE_W / 2),
+        window.innerWidth - MARGIN - BUBBLE_W / 2,
+      );
+      setPos({ top: rect.top - 8, left: clampedLeft });
+    }
+    setOpen(true);
+  }
+
+  return (
+    <span
+      ref={ref}
+      className="lab-help-dot"
+      style={{ cursor: "help", flexShrink: 0 }}
+      onMouseEnter={show}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={show}
+      onBlur={() => setOpen(false)}
+      tabIndex={0}
+      role="button"
+      aria-label="Help"
+    >
+      ?
+      {open && createPortal(
+        <span
+          className="lab-help-bubble"
+          style={{ position: "fixed", top: pos.top, left: pos.left, transform: "translate(-50%, -100%)" }}
+        >
+          {text}
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
+}
 
 function isVariableNode(node: Node | undefined): boolean {
   if (!node) return false;
@@ -502,6 +553,9 @@ export function LabPage(): JSX.Element {
   const [createFeedbackLoopStockId, setCreateFeedbackLoopStockId] = useState<string | null>(null);
   const [editingFeedbackLoopId, setEditingFeedbackLoopId] = useState<string | null>(null);
   const [lessonTaskContext, setLessonTaskContext] = useState<LabTaskContext | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ screenX: number; screenY: number; flowX: number; flowY: number } | null>(null);
+  const [addCommentNodeId, setAddCommentNodeId] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
   const [isLightTheme, setIsLightTheme] = useState<boolean>(() => {
     if (typeof document === "undefined") return false;
     return document.documentElement.dataset.theme === "light";
@@ -513,6 +567,8 @@ export function LabPage(): JSX.Element {
   const lastHistorySigRef = useRef("");
   const loadedSystemGraphIdRef = useRef<number | null>(null);
   const userId = useAuthStore((state) => state.userId);
+  const isAdmin = useAuthStore((state) => state.isAdmin);
+  const userEmail = useAuthStore((state) => state.email);
   const location = useLocation();
   const systemsQuery = useQuery({
     queryKey: ["systems", userId],
@@ -528,6 +584,16 @@ export function LabPage(): JSX.Element {
     queryKey: ["completed-tasks", userId],
     queryFn: fetchCompletedTasks,
     enabled: lessonTaskContext !== null && !!userId,
+  });
+  const currentUserProfileQuery = useQuery({
+    queryKey: ["profile-lab", userId],
+    queryFn: async () => {
+      if (!userId) return null;
+      const { data } = await (await import("../lib/api")).api.get(`/users/${userId}`);
+      return data as { id: number; name: string; last_name: string; email: string; avatar_path?: string | null };
+    },
+    enabled: !!userId,
+    staleTime: 60_000,
   });
 
   const {
@@ -560,6 +626,7 @@ export function LabPage(): JSX.Element {
     addFlow,
     addConstant,
     addVariable,
+    addNodeAtPosition,
     toGraphJson,
     clearSimulation,
     setSimulationSteps,
@@ -596,7 +663,12 @@ export function LabPage(): JSX.Element {
       stockNode: StockNode,
       constantNode: ConstantNode,
       variableNode: VariableNode,
+      commentNode: CommentNode,
     }),
+    [],
+  );
+  const edgeTypes = useMemo(
+    () => ({ default: AnimatedParticleEdge }),
     [],
   );
   const titleTrimmed = title.trim();
@@ -705,6 +777,18 @@ export function LabPage(): JSX.Element {
       queryClient.invalidateQueries({ queryKey: ["progress", userId] });
     },
   });
+  const submitForReviewMutation = useMutation({
+    mutationFn: async (systemId: number) => submitSystemForReview(systemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["systems", userId] });
+    },
+  });
+  const markSeenMutation = useMutation({
+    mutationFn: async (systemId: number) => markSystemChangesSeen(systemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["systems", userId] });
+    },
+  });
   const saveButtonDisabled = saveMutation.isPending || saveDisabledNoChanges;
 
   useEffect(() => {
@@ -750,6 +834,17 @@ export function LabPage(): JSX.Element {
     }
     if (typeof state.systemTitle === "string" && state.systemTitle.trim()) setTitle(state.systemTitle);
   }, [location.state, loadGraphJson, setActiveSystemId]);
+
+  // Auto-mark changes as seen when the system is loaded
+  useEffect(() => {
+    if (!activeSystemId) return;
+    const systems = (systemsQuery.data ?? []) as SystemModel[];
+    const current = systems.find((s) => s.id === activeSystemId);
+    if (current?.has_unseen_changes) {
+      markSeenMutation.mutate(activeSystemId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSystemId, systemsQuery.data]);
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const editingFeedbackLoop = useMemo<FeedbackLoop | null>(
@@ -1078,9 +1173,18 @@ export function LabPage(): JSX.Element {
           data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
         };
       });
-      return baseEdges;
+      return baseEdges.map((e) => {
+        let sourceValue = 0;
+        if (isPlaying && currentSnapshot) {
+          sourceValue = Math.abs(currentSnapshot.values[e.source] ?? 0);
+        }
+        return {
+          ...e,
+          data: { ...(e.data ?? {}), animate: isPlaying && sourceValue > 0 },
+        };
+      });
     },
-    [edges, isLightTheme, labColorTokens, nodesById],
+    [edges, isLightTheme, labColorTokens, nodesById, isPlaying, currentSnapshot],
   );
 
   function valueOfNode(
@@ -1465,6 +1569,41 @@ export function LabPage(): JSX.Element {
     saveMutation.mutate();
   }
 
+  function handleSubmitForReview(): void {
+    if (!activeSystemId) return;
+    if (submitForReviewMutation.isPending) return;
+    submitForReviewMutation.mutate(activeSystemId);
+  }
+
+  function handlePaneContextMenu(event: React.MouseEvent): void {
+    if (lockEditing) return;
+    event.preventDefault();
+    const rfPos = rfInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY }) ?? { x: 0, y: 0 };
+    setContextMenu({ screenX: event.clientX, screenY: event.clientY, flowX: rfPos.x, flowY: rfPos.y });
+  }
+
+  function handleContextMenuAddNode(type: "stock" | "flow" | "commentNode"): void {
+    if (!contextMenu) return;
+    const pos = { x: contextMenu.flowX, y: contextMenu.flowY };
+    if (type === "commentNode") {
+      const profile = currentUserProfileQuery.data;
+      const authorName = profile ? `${profile.name} ${profile.last_name}`.trim() : "";
+      const authorEmail = profile?.email ?? userEmail ?? "";
+      const nodeId = addNodeAtPosition("commentNode", pos, {
+        text: "",
+        authorId: userId ?? 0,
+        authorName,
+        authorEmail,
+        authorAvatarPath: profile?.avatar_path ?? null,
+      });
+      setAddCommentNodeId(nodeId);
+      setCommentDraft("");
+    } else {
+      addNodeAtPosition(type, pos);
+    }
+    setContextMenu(null);
+  }
+
   function handleMarkTaskCompleted(): void {
     if (!lessonTaskContext || isCurrentTaskCompleted || completeTaskMutation.isPending) return;
     completeTaskMutation.mutate(lessonTaskContext.taskId);
@@ -1845,6 +1984,7 @@ export function LabPage(): JSX.Element {
             nodes={displayedNodes}
             edges={displayedEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -1856,7 +1996,9 @@ export function LabPage(): JSX.Element {
               setSelectedEdgeId(null);
               setSelectedNodeIds([]);
               setSelectedEdgeIds([]);
+              setContextMenu(null);
             }}
+            onPaneContextMenu={handlePaneContextMenu}
             onInit={(instance) => {
               setRfInstance(instance);
               instance.zoomTo(DEFAULT_ZOOM, { duration: 0 });
@@ -1879,6 +2021,67 @@ export function LabPage(): JSX.Element {
           </ReactFlow>
         </div>
       </div>
+
+      {/* Right-click context menu */}
+      {contextMenu ? (
+        <div
+          className="lab-context-menu"
+          style={{ left: contextMenu.screenX, top: contextMenu.screenY }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("stock")}>+ Stock</button>
+          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("flow")}>+ Flow</button>
+          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("commentNode")}>+ Comment</button>
+        </div>
+      ) : null}
+
+      {/* Comment text-entry dialog */}
+      {addCommentNodeId ? (
+        <div className="lab-comment-entry-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setAddCommentNodeId(null); }}>
+          <div className="lab-comment-entry">
+            <div className="lab-comment-entry-title">Add comment</div>
+            <textarea
+              className="lab-comment-entry-textarea"
+              autoFocus
+              rows={4}
+              placeholder="Write your comment..."
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+            />
+            <div className="lab-comment-entry-actions">
+              <button
+                className="lab-btn lab-btn-secondary"
+                onClick={() => {
+                  // Update the node data with the draft text
+                  const store = useLabStore.getState();
+                  store.onNodesChange([]);  // no-op to flush; we set directly
+                  const nodeId = addCommentNodeId;
+                  // Use setSelectedNodeId + updateSelectedNode pattern
+                  store.setSelectedNodeId(nodeId);
+                  store.updateSelectedNode({ text: commentDraft });
+                  store.setSelectedNodeId(null);
+                  setAddCommentNodeId(null);
+                  setCommentDraft("");
+                }}
+              >
+                Save
+              </button>
+              <button
+                className="lab-btn lab-btn-secondary"
+                onClick={() => {
+                  // Remove the newly created empty comment node
+                  const store = useLabStore.getState();
+                  store.onNodesChange([{ type: "remove", id: addCommentNodeId }]);
+                  setAddCommentNodeId(null);
+                  setCommentDraft("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="lab-canvas-toolbar" role="group" aria-label="Canvas controls">
         <button
@@ -1933,7 +2136,10 @@ export function LabPage(): JSX.Element {
         <h3 className="lab-panel-title">Simulation</h3>
 
         <label className="block text-sm lab-field">
-          Steps
+          <span className="lab-label-row">
+            <span>Steps</span>
+            <HelpTip text={"Number of simulation steps.\nMore steps = longer simulation timeline.\nTypical range: 100–2000."} />
+          </span>
           <input
             className="lab-input mt-1"
             type="text"
@@ -1951,7 +2157,10 @@ export function LabPage(): JSX.Element {
         </label>
 
         <label className="block text-sm lab-field">
-          dt
+          <span className="lab-label-row">
+            <span>dt</span>
+            <HelpTip text={"Time step size between each simulation step.\nSmaller dt = higher accuracy but slower.\nTypical range: 0.01 – 1.0."} />
+          </span>
           <input
             className="lab-input mt-1"
             type="text"
@@ -1971,13 +2180,7 @@ export function LabPage(): JSX.Element {
         <label className="block text-sm lab-field">
           <span className="lab-label-row">
             <span>Solver</span>
-              <span
-                className="lab-help-dot"
-                title={"Euler: simpler method for less complex systems when precision is not critical.\n\nRK4: more advanced method with more computations per step and higher accuracy."}
-                aria-label="Solver help"
-              >
-                ?
-              </span>
+            <HelpTip text={"Euler: simpler method for less complex systems when precision is not critical.\n\nRK4: more advanced method with more computations per step and higher accuracy."} />
           </span>
           <select className="lab-input mt-1" value={algorithm} onChange={(e) => setAlgorithm(e.target.value as "euler_v2" | "rk4_v2")}>
             <option value="euler_v2">Euler</option>
@@ -2068,6 +2271,21 @@ export function LabPage(): JSX.Element {
           <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={createNewSystem} disabled={lockEditing}>
             Create new system
           </button>
+          {activeSystemId && !isAdmin ? (
+            <button
+              className={`lab-btn lab-btn-secondary w-full ${submitForReviewMutation.isSuccess ? "lab-btn-save-idle" : ""}`}
+              type="button"
+              onClick={handleSubmitForReview}
+              disabled={submitForReviewMutation.isPending || submitForReviewMutation.isSuccess}
+              title="Submit this system to an admin for review"
+            >
+              {submitForReviewMutation.isPending
+                ? "Submitting..."
+                : submitForReviewMutation.isSuccess
+                  ? "Submitted for review ✓"
+                  : "Submit for review"}
+            </button>
+          ) : null}
           {saveAttempted && saveBlockedReason ? <div className="text-xs lab-error">{saveBlockedReason}</div> : null}
           {saveMutation.isError ? <div className="text-xs lab-error">Unable to save system.</div> : null}
         </div>
@@ -2236,7 +2454,10 @@ export function LabPage(): JSX.Element {
         ) : null}
 
         <div className="lab-divider pt-3 space-y-2">
-          <div className="text-sm lab-field">Feedback loops</div>
+          <div className="text-sm lab-field lab-label-row">
+            <span>Feedback loops</span>
+            <HelpTip text={"Feedback loops create automatic control mechanisms.\n\nBalancing (B): pushes the system toward a goal value.\nReinforcing (R): amplifies change over time — growth or collapse."} />
+          </div>
           {feedbackLoopList.length === 0 ? (
             <div className="text-xs lab-muted">No feedback loops yet.</div>
           ) : (
@@ -2307,12 +2528,15 @@ export function LabPage(): JSX.Element {
 
         <div className="lab-divider pt-3">
           <div className="lab-chart-head">
-            <span className="text-xs lab-field">Simulation chart</span>
+            <span className="text-sm lab-field lab-label-row">
+              <span>Simulation chart</span>
+              <HelpTip text={"Shows all variables over time.\n\nClick a line or legend item to focus it — others will fade out.\nClick again to deselect.\nSelect a node on the canvas to view only its chart."} />
+            </span>
             <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsChartModalOpen(true)}>
               Expand
             </button>
           </div>
-          <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight={220} isLightTheme={isLightTheme} />
+          <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight={220} isLightTheme={isLightTheme} nodes={nodes} feedbackLoops={feedbackLoops} selectedNodeId={selectedNodeId} />
         </div>
       </aside>
       <FeedbackLoopModal
@@ -2377,7 +2601,7 @@ export function LabPage(): JSX.Element {
                 Close
               </button>
             </div>
-            <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight="72vh" isLightTheme={isLightTheme} />
+            <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight="72vh" isLightTheme={isLightTheme} nodes={nodes} feedbackLoops={feedbackLoops} selectedNodeId={selectedNodeId} />
           </div>
         </div>
       ) : null}

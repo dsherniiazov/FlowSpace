@@ -12,9 +12,7 @@ const savedTheme = localStorage.getItem("flowspace-theme");
 const initialTheme =
   savedTheme === "dark" || savedTheme === "light"
     ? savedTheme
-    : window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+    : "light";
 document.documentElement.setAttribute("data-theme", initialTheme);
 document.documentElement.style.colorScheme = initialTheme;
 

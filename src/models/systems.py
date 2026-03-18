@@ -29,5 +29,7 @@ class SystemModel(Base):
 
     is_public = Column(Boolean, default=False)
     is_template = Column(Boolean, default=False)
+    is_submitted_for_review = Column(Boolean, default=False, nullable=False)
+    has_unseen_changes = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

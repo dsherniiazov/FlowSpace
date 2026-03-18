@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { fetchLessons } from "../features/lessons/api";
@@ -24,6 +24,7 @@ export function AppLayout(): JSX.Element {
   const isAdmin = useAuthStore((state) => state.isAdmin);
   const userId = useAuthStore((state) => state.userId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const [lessonHeader, setLessonHeader] = useState<string | null>(null);
   const lessonFocusMatch = useMatch("/app/lessons/:lessonId");
   const isLessonFocusMode = Boolean(lessonFocusMatch);
@@ -31,7 +32,7 @@ export function AppLayout(): JSX.Element {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem("flowspace-theme");
     if (saved === "dark" || saved === "light") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return "light";
   });
 
   useEffect(() => {
@@ -39,6 +40,18 @@ export function AppLayout(): JSX.Element {
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem("flowspace-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (sidebarCollapsed) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (sidebarRef.current?.contains(target)) return;
+      setSidebarCollapsed(true);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [sidebarCollapsed]);
 
   const lessonsQuery = useQuery({ queryKey: ["lessons"], queryFn: fetchLessons, enabled: isLessonFocusMode });
   const sectionsQuery = useQuery({ queryKey: ["sections"], queryFn: fetchSections, enabled: isLessonFocusMode });
@@ -114,7 +127,7 @@ export function AppLayout(): JSX.Element {
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? "is-collapsed" : ""}`}>
-      <aside className="app-sidebar">
+      <aside ref={sidebarRef} className="app-sidebar">
         <div className="app-sidebar-header">
           <button className="logo-btn" onClick={() => setSidebarCollapsed(true)}>
             <img src={logoSrc} alt="FlowSpace" className="app-brand-logo" />
@@ -158,6 +171,9 @@ export function AppLayout(): JSX.Element {
               <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/profile">Profile</NavLink>
               {isAdmin ? (
                 <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/control">Control</NavLink>
+              ) : null}
+              {isAdmin ? (
+                <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/pending-review">Pending Review</NavLink>
               ) : null}
             </nav>
           </div>
