@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ProfileAvatarModal } from "../components/ProfileAvatarModal";
 import { ProfileConfirmModal } from "../components/ProfileConfirmModal";
 import { ProfilePasswordModal } from "../components/ProfilePasswordModal";
 import { fetchProgressSummary } from "../features/progress/api";
-import { deleteSystem, fetchSystems } from "../features/systems/api";
+import { createSystem, deleteSystem, fetchSystems } from "../features/systems/api";
 import { changeUserPassword, deleteUser, getAvatarUrl, uploadUserAvatar } from "../features/users/api";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
@@ -94,6 +94,24 @@ export function ProfilePage(): JSX.Element {
     mutationFn: async (systemId: number) => deleteSystem(systemId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["systems", userId] });
+    },
+  });
+
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const importSystemMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const text = await file.text();
+      const graph = JSON.parse(text) as Record<string, unknown>;
+      const title = file.name.replace(/\.json$/i, "");
+      if (!userId) throw new Error("No user id");
+      return createSystem({ owner_id: userId, title, graph_json: graph });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["systems", userId] });
+      setProfileNotice({ tone: "success", text: "System imported successfully." });
+    },
+    onError: (error) => {
+      setProfileNotice({ tone: "error", text: resolveErrorMessage(error, "Unable to import system.") });
     },
   });
 
@@ -205,7 +223,30 @@ export function ProfilePage(): JSX.Element {
         </div>
 
         <div className="panel profile-main-panel p-6">
-          <h3 className="profile-page-heading text-2xl font-medium text-white">My Systems</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="profile-page-heading text-2xl font-medium text-white">My Systems</h3>
+            <div>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) importSystemMutation.mutate(file);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                disabled={importSystemMutation.isPending}
+              >
+                {importSystemMutation.isPending ? "Importing..." : "Import system"}
+              </button>
+            </div>
+          </div>
           {systemsQuery.isLoading ? <div className="mt-3 text-zinc-500">Loading systems...</div> : null}
           {systemsQuery.isError ? <div className="mt-3 text-zinc-400">Unable to fetch systems.</div> : null}
           {systems.length === 0 && !systemsQuery.isLoading ? <div className="mt-3 text-zinc-500">No systems saved yet.</div> : null}

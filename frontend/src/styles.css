@@ -5115,3 +5115,108 @@ html[data-theme="dark"] .lab-comment-entry-textarea {
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(239,68,68,0.4);
 }
+
+/* ─── Tutorial overlay ─── */
+
+.tutorial-root {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+.tutorial-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  transition: clip-path 0.3s ease;
+}
+
+.tutorial-highlight-ring {
+  position: fixed;
+  border: 2.5px solid #22c55e;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25), 0 0 24px rgba(34, 197, 94, 0.15);
+  pointer-events: none;
+  animation: tutorial-pulse 1.8s ease-in-out infinite;
+  z-index: 100000;
+}
+
+@keyframes tutorial-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25), 0 0 24px rgba(34, 197, 94, 0.15); }
+  50% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.18), 0 0 32px rgba(34, 197, 94, 0.22); }
+}
+
+.tutorial-popup {
+  position: fixed;
+  width: 340px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  pointer-events: auto;
+  z-index: 100001;
+  animation: tutorial-popup-enter 0.25s ease-out;
+}
+
+@keyframes tutorial-popup-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tutorial-popup-step {
+  font-size: 12px;
+  font-weight: 600;
+  color: #22c55e;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.tutorial-popup-text {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #1e293b;
+  margin: 0 0 16px;
+}
+
+.tutorial-popup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #22c55e;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tutorial-popup-btn:hover {
+  background: #16a34a;
+}
+
+.tutorial-popup-compact {
+  padding: 14px 20px;
+}
+
+.tutorial-popup-compact .tutorial-popup-text {
+  margin-bottom: 0;
+}
+
+html[data-theme="dark"] .tutorial-popup {
+  background: #1e293b;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .tutorial-popup-text {
+  color: #e2e8f0;
+}
+
+html[data-theme="dark"] .tutorial-backdrop {
+  background: rgba(0, 0, 0, 0.7);
+}

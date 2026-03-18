@@ -26,6 +26,8 @@ import { useAuthStore } from "../store/authStore";
 import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, useLabStore } from "../store/labStore";
 import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
 import { getLabColorTokens, resolveStockColor, useUiPreferencesStore } from "../store/uiPreferencesStore";
+import { useTutorialStore } from "../store/tutorialStore";
+import { TutorialOverlay } from "../components/TutorialOverlay";
 
 const DEFAULT_ZOOM = 0.6;
 const MIN_ZOOM = 0.06;
@@ -540,6 +542,7 @@ export function LabPage(): JSX.Element {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isChartModalOpen, setIsChartModalOpen] = useState(false);
+  const [isConfirmNewSystemOpen, setIsConfirmNewSystemOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const [canvasLocked, setCanvasLocked] = useState(false);
@@ -828,6 +831,14 @@ export function LabPage(): JSX.Element {
         taskDescription: taskContext.taskDescription,
       });
       setIsTaskModalOpen(false);
+      // Auto-start tutorial for intro tasks
+      if (taskContext.taskTitle === "Simulation") {
+        useTutorialStore.getState().startLesson("simulation");
+      } else if (taskContext.taskTitle === "Editor") {
+        useTutorialStore.getState().startLesson("editor");
+      } else if (taskContext.taskTitle === "Workspace") {
+        useTutorialStore.getState().startLesson("workspace");
+      }
     } else {
       setLessonTaskContext(null);
       setIsTaskModalOpen(false);
@@ -1620,8 +1631,15 @@ export function LabPage(): JSX.Element {
 
   function createNewSystem(): void {
     if (lockEditing) return;
-    const confirmed = window.confirm("Create a new system and discard current unsaved changes?");
-    if (!confirmed) return;
+    // During tutorial, skip confirmation
+    if (useTutorialStore.getState().active) {
+      doCreateNewSystem();
+      return;
+    }
+    setIsConfirmNewSystemOpen(true);
+  }
+
+  function doCreateNewSystem(): void {
     if (animationRef.current !== null) {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
@@ -1976,7 +1994,7 @@ export function LabPage(): JSX.Element {
 
   return (
     <section className="lab-editor-shell">
-      <div className="lab-canvas-wrap">
+      <div className="lab-canvas-wrap" data-tutorial="canvas">
         <div className="h-full w-full min-h-0 overflow-hidden">
           <ReactFlow
             className="lab-reactflow"
@@ -2031,14 +2049,14 @@ export function LabPage(): JSX.Element {
         >
           <button className="lab-context-item" onClick={() => handleContextMenuAddNode("stock")}>+ Stock</button>
           <button className="lab-context-item" onClick={() => handleContextMenuAddNode("flow")}>+ Flow</button>
-          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("commentNode")}>+ Comment</button>
+          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("commentNode")} data-tutorial="ctx-comment">+ Comment</button>
         </div>
       ) : null}
 
       {/* Comment text-entry dialog */}
       {addCommentNodeId ? (
-        <div className="lab-comment-entry-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setAddCommentNodeId(null); }}>
-          <div className="lab-comment-entry">
+        <div className="lab-comment-entry-overlay" data-tutorial="comment-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setAddCommentNodeId(null); }}>
+          <div className="lab-comment-entry" data-tutorial="comment-entry">
             <div className="lab-comment-entry-title">Add comment</div>
             <textarea
               className="lab-comment-entry-textarea"
@@ -2083,13 +2101,14 @@ export function LabPage(): JSX.Element {
         </div>
       ) : null}
 
-      <div className="lab-canvas-toolbar" role="group" aria-label="Canvas controls">
+      <div className="lab-canvas-toolbar" role="group" aria-label="Canvas controls" data-tutorial="toolbar">
         <button
           className="lab-canvas-btn"
           type="button"
           onClick={resetZoomToDefault}
           aria-label="Reset zoom to 100%"
           title="Reset zoom to 100%"
+          data-tutorial="zoom-reset"
         >
           <span aria-hidden="true">⤢</span>
         </button>
@@ -2100,6 +2119,7 @@ export function LabPage(): JSX.Element {
           onClick={() => rfInstance?.zoomIn({ duration: 180 })}
           aria-label="Zoom in"
           title="Zoom in"
+          data-tutorial="zoom-in"
         >
           <span aria-hidden="true">⊕</span>
         </button>
@@ -2110,6 +2130,7 @@ export function LabPage(): JSX.Element {
           onClick={() => rfInstance?.zoomOut({ duration: 180 })}
           aria-label="Zoom out"
           title="Zoom out"
+          data-tutorial="zoom-out"
         >
           <span aria-hidden="true">⊖</span>
         </button>
@@ -2120,13 +2141,14 @@ export function LabPage(): JSX.Element {
           onClick={() => setCanvasLocked((prev) => !prev)}
           aria-label={canvasLocked ? "Unlock workspace" : "Lock workspace"}
           title={canvasLocked ? "Unlock workspace" : "Lock workspace"}
+          data-tutorial="lock-canvas"
         >
           <span className="lab-canvas-lock-icon" aria-hidden="true">
             <LockToggleIcon locked={canvasLocked} />
           </span>
         </button>
         <div className="lab-canvas-sep" />
-        <button className="lab-canvas-btn lab-canvas-export" type="button" onClick={exportJson}>
+        <button className="lab-canvas-btn lab-canvas-export" type="button" onClick={exportJson} data-tutorial="export">
           <span>Export</span>
           <span aria-hidden="true">⇩</span>
         </button>
@@ -2135,7 +2157,7 @@ export function LabPage(): JSX.Element {
       <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-left space-y-4">
         <h3 className="lab-panel-title">Simulation</h3>
 
-        <label className="block text-sm lab-field">
+        <label className="block text-sm lab-field" data-tutorial="steps">
           <span className="lab-label-row">
             <span>Steps</span>
             <HelpTip text={"Number of simulation steps.\nMore steps = longer simulation timeline.\nTypical range: 100–2000."} />
@@ -2156,7 +2178,7 @@ export function LabPage(): JSX.Element {
           />
         </label>
 
-        <label className="block text-sm lab-field">
+        <label className="block text-sm lab-field" data-tutorial="dt">
           <span className="lab-label-row">
             <span>dt</span>
             <HelpTip text={"Time step size between each simulation step.\nSmaller dt = higher accuracy but slower.\nTypical range: 0.01 – 1.0."} />
@@ -2188,12 +2210,12 @@ export function LabPage(): JSX.Element {
           </select>
         </label>
 
-        <button className="lab-btn lab-btn-primary w-full" onClick={runLocalSimulation} disabled={isPlaying}>
+        <button className="lab-btn lab-btn-primary w-full" onClick={runLocalSimulation} disabled={isPlaying} data-tutorial="run-simulation">
           {isPlaying ? "Running..." : "Run simulation"}
         </button>
         <button className="lab-btn lab-btn-secondary w-full" onClick={() => clearSimulation()}>Reset simulation</button>
 
-        <div className="lab-divider pt-4">
+        <div className="lab-divider pt-4" data-tutorial="timeline">
           <label className="mb-1 block text-sm lab-field">Timeline</label>
           <input
             className="lab-range w-full"
@@ -2258,17 +2280,19 @@ export function LabPage(): JSX.Element {
               onChange={(e) => setTitle(e.target.value)}
               placeholder="System title"
               aria-label="System title"
+              data-tutorial="system-title"
             />
             <button
               className={`lab-btn lab-btn-secondary ${saveDisabledNoChanges ? "lab-btn-save-idle" : ""}`}
               onClick={handleSaveSystem}
               disabled={saveButtonDisabled}
               title={saveDisabledNoChanges ? "No changes to save" : "Save system"}
+              data-tutorial="save-system"
             >
               Save system
             </button>
           </div>
-          <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={createNewSystem} disabled={lockEditing}>
+          <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={createNewSystem} disabled={lockEditing} data-tutorial="create-new-system">
             Create new system
           </button>
           {activeSystemId && !isAdmin ? (
@@ -2290,8 +2314,8 @@ export function LabPage(): JSX.Element {
           {saveMutation.isError ? <div className="text-xs lab-error">Unable to save system.</div> : null}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <button className="lab-btn lab-btn-secondary flex-1" onClick={addStock} disabled={lockEditing}>+ Stock</button>
-          <button className="lab-btn lab-btn-secondary flex-1" onClick={addFlow} disabled={lockEditing}>+ Flow</button>
+          <button className="lab-btn lab-btn-secondary flex-1" onClick={() => { addStock(); if (useTutorialStore.getState().active) { const last = useLabStore.getState().nodes.at(-1); if (last) setSelectedNodeId(last.id); } }} disabled={lockEditing} data-tutorial="add-stock">+ Stock</button>
+          <button className="lab-btn lab-btn-secondary flex-1" onClick={() => { addFlow(); if (useTutorialStore.getState().active) { const last = useLabStore.getState().nodes.at(-1); if (last) setSelectedNodeId(last.id); } }} disabled={lockEditing} data-tutorial="add-flow">+ Flow</button>
           <button className="lab-btn lab-btn-secondary flex-1" onClick={addConstant} disabled={lockEditing}>+ Constant</button>
           <button className="lab-btn lab-btn-secondary flex-1" onClick={addVariable} disabled={lockEditing}>+ Variable</button>
         </div>
@@ -2304,7 +2328,7 @@ export function LabPage(): JSX.Element {
 
         {selectedNode ? (
           <div className="space-y-2">
-            <label className="block text-xs lab-field">
+            <label className="block text-xs lab-field" data-tutorial="node-name">
               Name
               <input
                 className="lab-input mt-1"
@@ -2337,7 +2361,7 @@ export function LabPage(): JSX.Element {
             </div>
 
             {isFlowNode(selectedNode) ? (
-              <label className="block text-xs lab-field">
+              <label className="block text-xs lab-field" data-tutorial="node-bottleneck">
                 <span className="lab-label-row">
                   <span>Bottleneck</span>
                   <span
@@ -2366,7 +2390,7 @@ export function LabPage(): JSX.Element {
                 />
               </label>
             ) : (
-              <label className="block text-xs lab-field">
+              <label className="block text-xs lab-field" data-tutorial="node-quantity">
                 <span className="lab-label-row">
                   <span>Quantity</span>
                   <span
@@ -2427,7 +2451,7 @@ export function LabPage(): JSX.Element {
                   Create Feedback Loop
                 </button>
                 <div className="text-xs lab-field">Stock color</div>
-                <div className="lab-stock-palette">
+                <div className="lab-stock-palette" data-tutorial="stock-color">
                   {stockColorPresets.map((color) => (
                     <button
                       key={color}
@@ -2526,13 +2550,13 @@ export function LabPage(): JSX.Element {
           </div>
         ) : null}
 
-        <div className="lab-divider pt-3">
+        <div className="lab-divider pt-3" data-tutorial="chart">
           <div className="lab-chart-head">
             <span className="text-sm lab-field lab-label-row">
               <span>Simulation chart</span>
               <HelpTip text={"Shows all variables over time.\n\nClick a line or legend item to focus it — others will fade out.\nClick again to deselect.\nSelect a node on the canvas to view only its chart."} />
             </span>
-            <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsChartModalOpen(true)}>
+            <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsChartModalOpen(true)} data-tutorial="chart-expand">
               Expand
             </button>
           </div>
@@ -2593,7 +2617,7 @@ export function LabPage(): JSX.Element {
         </div>
       ) : null}
       {isChartModalOpen ? (
-        <div className="lab-modal-overlay" onClick={() => setIsChartModalOpen(false)}>
+        <div className="lab-modal-overlay" data-tutorial="chart-modal" onClick={() => setIsChartModalOpen(false)}>
           <div className="lab-chart-modal" onClick={(e) => e.stopPropagation()}>
             <div className="lab-chart-modal-head">
               <h3 className="lab-panel-title">Simulation chart</h3>
@@ -2605,6 +2629,40 @@ export function LabPage(): JSX.Element {
           </div>
         </div>
       ) : null}
+      {isConfirmNewSystemOpen ? (
+        <div className="lab-modal-overlay" onClick={() => setIsConfirmNewSystemOpen(false)}>
+          <div className="lab-task-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="lab-chart-modal-head">
+              <h3 className="lab-panel-title">Create new system</h3>
+            </div>
+            <div className="lab-task-modal-body">
+              <p className="lab-task-modal-description">
+                Are you sure you want to create a new system? Any unsaved changes will be lost.
+              </p>
+              <div className="lab-task-modal-actions">
+                <button
+                  className="lab-btn lab-btn-primary"
+                  type="button"
+                  onClick={() => {
+                    setIsConfirmNewSystemOpen(false);
+                    doCreateNewSystem();
+                  }}
+                >
+                  Yes, create new
+                </button>
+                <button
+                  className="lab-btn lab-btn-secondary"
+                  type="button"
+                  onClick={() => setIsConfirmNewSystemOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <TutorialOverlay onFinish={handleMarkTaskCompleted} />
     </section>
   );
 }

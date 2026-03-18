@@ -13,8 +13,20 @@ from src.routers.simulations import router as simulations_router
 from src.routers.users import router as users_router
 from src.routers.auth import router as auth_router
 from src.config import settings
+from src.seed import seed_intro
+from src.db import SessionLocal
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def _run_seeds() -> None:
+    db = SessionLocal()
+    try:
+        seed_intro(db)
+    finally:
+        db.close()
+
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key)
 allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
