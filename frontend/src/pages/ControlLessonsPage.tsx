@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { createLesson, deleteLesson, fetchLessons, updateLesson } from "../features/lessons/api";
@@ -11,20 +11,9 @@ import {
 import { createSection, deleteSection, fetchSections, updateSection } from "../features/sections/api";
 import { fetchSystem } from "../features/systems/api";
 import { Lesson, LessonTask, Section } from "../types/api";
-
-const DEFAULT_SECTION_COLORS = ["#ef4444", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
-const UNASSIGNED_SECTION_KEY = "unassigned";
-
-type SectionKey = number | typeof UNASSIGNED_SECTION_KEY;
-
-type ModalState =
-  | { type: "section-create" }
-  | { type: "section-detail"; sectionKey: SectionKey }
-  | { type: "section-edit"; sectionId: number }
-  | { type: "lesson-create"; sectionId: number }
-  | { type: "lesson-detail"; sectionKey: SectionKey; lessonId: number }
-  | { type: "task-create"; sectionKey: SectionKey; lessonId: number }
-  | { type: "task-detail"; sectionKey: SectionKey; lessonId: number; taskId: number };
+import { ControlLessonsModal } from "./controlLessons/ControlLessonsModal";
+import { DEFAULT_SECTION_COLORS, ModalState, SectionKey, UNASSIGNED_SECTION_KEY } from "./controlLessons/types";
+import { sortByOrder } from "./controlLessons/utils";
 
 export function ControlLessonsPage(): JSX.Element {
   const [modalState, setModalState] = useState<ModalState | null>(null);
@@ -387,383 +376,6 @@ export function ControlLessonsPage(): JSX.Element {
     });
   }
 
-  function renderModal(): JSX.Element | null {
-    if (!modalState) return null;
-
-    if (modalState.type === "section-create") {
-      return (
-        <ControlModal title="Add section" onClose={() => setModalState(null)}>
-          <form className="space-y-4" onSubmit={onCreateSection}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Section name</span>
-              <input
-                className="input"
-                placeholder="Section title"
-                value={sectionTitle}
-                onChange={(event) => setSectionTitle(event.target.value)}
-                required
-              />
-            </label>
-            <div className="space-y-2">
-              <span className="text-sm font-medium">Color</span>
-              <ColorPicker value={sectionColor} onChange={setSectionColor} />
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button className="btn-secondary" type="button" onClick={() => setModalState(null)}>
-                Cancel
-              </button>
-              <button className="btn-primary" type="submit" disabled={createSectionMutation.isPending}>
-                {createSectionMutation.isPending ? "Saving..." : "Create section"}
-              </button>
-            </div>
-          </form>
-        </ControlModal>
-      );
-    }
-
-    if (modalState.type === "section-detail") {
-      const sectionTitleValue = getSectionTitleByKey(modalState.sectionKey);
-      const sectionColorValue = getSectionColorByKey(modalState.sectionKey);
-      const sectionLessons = getSectionLessons(modalState.sectionKey);
-      const canEditSection = modalState.sectionKey !== UNASSIGNED_SECTION_KEY;
-
-      return (
-        <ControlModal title={sectionTitleValue} onClose={() => setModalState(null)}>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center gap-3">
-                <span
-                  className="inline-block h-5 w-5 rounded-full border border-slate-200"
-                  style={{ backgroundColor: sectionColorValue }}
-                />
-                <div>
-                  <div className="text-lg font-semibold">{sectionTitleValue}</div>
-                  <div className="text-sm text-slate-500">
-                    Lessons: {sectionLessons.length} • Tasks: {getSectionTaskCount(modalState.sectionKey)}
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {canEditSection ? (
-                  <>
-                    <button className="btn-secondary" type="button" onClick={() => openSectionEdit(Number(modalState.sectionKey))}>
-                      Edit section
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      type="button"
-                      disabled={deleteSectionMutation.isPending}
-                      onClick={() => onDeleteSection(Number(modalState.sectionKey))}
-                    >
-                      {deleteSectionMutation.isPending ? "Deleting..." : "Delete section"}
-                    </button>
-                  </>
-                ) : null}
-                {canEditSection ? (
-                  <button className="btn-primary" type="button" onClick={() => openLessonCreate(Number(modalState.sectionKey))}>
-                    Add lesson
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="text-sm font-medium text-slate-500">Lessons</div>
-              {sectionLessons.length ? (
-                sectionLessons.map((lesson) => {
-                  const lessonTasks = tasksByLesson.get(lesson.id) ?? [];
-
-                  return (
-                    <button
-                      key={lesson.id}
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left transition hover:bg-slate-50"
-                      onClick={() => openLessonDetail(lesson.id)}
-                    >
-                      <div>
-                        <div className="font-medium">{lesson.title}</div>
-                        <div className="text-sm text-slate-500">Tasks: {lessonTasks.length}</div>
-                      </div>
-                      <span className="text-sm text-slate-400">Open</span>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500">
-                  {canEditSection
-                    ? "No lessons yet. Use Add lesson to create the first one."
-                    : "Lessons from deleted sections appear here until you move or delete them."}
-                </div>
-              )}
-            </div>
-          </div>
-        </ControlModal>
-      );
-    }
-
-    if (modalState.type === "section-edit") {
-      return (
-        <ControlModal
-          title="Edit section"
-          onClose={() => setModalState(null)}
-          onBack={() => openSectionDetail(modalState.sectionId)}
-        >
-          <form className="space-y-4" onSubmit={onSaveSection}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Section name</span>
-              <input
-                className="input"
-                placeholder="Section title"
-                value={sectionTitle}
-                onChange={(event) => setSectionTitle(event.target.value)}
-                required
-              />
-            </label>
-            <div className="space-y-2">
-              <span className="text-sm font-medium">Color</span>
-              <ColorPicker value={sectionColor} onChange={setSectionColor} />
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <button
-                className="btn-secondary"
-                type="button"
-                disabled={deleteSectionMutation.isPending}
-                onClick={() => onDeleteSection(modalState.sectionId)}
-              >
-                {deleteSectionMutation.isPending ? "Deleting..." : "Delete section"}
-              </button>
-              <button className="btn-primary" type="submit" disabled={updateSectionMutation.isPending}>
-                {updateSectionMutation.isPending ? "Saving..." : "Save changes"}
-              </button>
-            </div>
-          </form>
-        </ControlModal>
-      );
-    }
-
-    if (modalState.type === "lesson-create") {
-      return (
-        <ControlModal
-          title="Add lesson"
-          subtitle={`Section: ${getSectionTitleByKey(modalState.sectionId)}`}
-          onClose={() => setModalState(null)}
-          onBack={() => openSectionDetail(modalState.sectionId)}
-        >
-          <form className="space-y-4" onSubmit={onCreateLesson}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Lesson name</span>
-              <input
-                className="input"
-                placeholder="Lesson title"
-                value={lessonTitle}
-                onChange={(event) => setLessonTitle(event.target.value)}
-                required
-              />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Lesson content (Markdown)</span>
-              <textarea
-                className="input min-h-[240px]"
-                placeholder="Write lesson content in markdown"
-                value={lessonContent}
-                onChange={(event) => setLessonContent(event.target.value)}
-                required
-              />
-            </label>
-            <div className="flex items-center justify-end gap-2">
-              <button className="btn-secondary" type="button" onClick={() => openSectionDetail(modalState.sectionId)}>
-                Back
-              </button>
-              <button className="btn-primary" type="submit" disabled={createLessonMutation.isPending}>
-                {createLessonMutation.isPending ? "Saving..." : "Create lesson"}
-              </button>
-            </div>
-          </form>
-        </ControlModal>
-      );
-    }
-
-    if (modalState.type === "lesson-detail") {
-      const lesson = lessonsById.get(modalState.lessonId);
-      if (!lesson) return null;
-
-      const lessonTasks = tasksByLesson.get(lesson.id) ?? [];
-
-      return (
-        <ControlModal
-          title={lessonTitle || lesson.title}
-          subtitle={`Section: ${getSectionTitleByKey(modalState.sectionKey)}`}
-          onClose={() => setModalState(null)}
-          onBack={() => openSectionDetail(modalState.sectionKey)}
-        >
-          <form className="space-y-4" onSubmit={onSaveLesson}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Lesson name</span>
-              <input className="input" value={lessonTitle} onChange={(event) => setLessonTitle(event.target.value)} required />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Section</span>
-              <select
-                className="input"
-                value={lessonSectionId}
-                onChange={(event) => setLessonSectionId(event.target.value ? Number(event.target.value) : "")}
-              >
-                <option value="">Without section</option>
-                {sections.map((section) => (
-                  <option key={section.id} value={section.id}>
-                    {section.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Lesson content (Markdown)</span>
-              <textarea className="input min-h-[240px]" value={lessonContent} onChange={(event) => setLessonContent(event.target.value)} required />
-            </label>
-
-            <div className="space-y-2 rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium">Tasks</div>
-                  <div className="text-sm text-slate-500">Open a task to edit it or create a new one.</div>
-                </div>
-                <button className="btn-secondary" type="button" onClick={() => openTaskCreate(lesson.id)}>
-                  Add task
-                </button>
-              </div>
-              <div className="space-y-2">
-                {lessonTasks.length ? (
-                  lessonTasks.map((task) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left transition hover:bg-slate-50"
-                      onClick={() => openTaskDetail(task.id)}
-                    >
-                      <div>
-                        <div className="font-medium">{task.title}</div>
-                        <div className="text-sm text-slate-500 line-clamp-2">{task.description}</div>
-                      </div>
-                      <span className="text-sm text-slate-400">Open</span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500">
-                    No tasks yet. Use Add task to create the first one.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between gap-2">
-              <button
-                className="btn-secondary"
-                type="button"
-                disabled={deleteLessonMutation.isPending}
-                onClick={() => onDeleteLesson(lesson.id, modalState.sectionKey)}
-              >
-                {deleteLessonMutation.isPending ? "Deleting..." : "Delete lesson"}
-              </button>
-              <button className="btn-primary" type="submit" disabled={updateLessonMutation.isPending}>
-                {updateLessonMutation.isPending ? "Saving..." : "Save changes"}
-              </button>
-            </div>
-          </form>
-        </ControlModal>
-      );
-    }
-
-    if (modalState.type === "task-create") {
-      return (
-        <ControlModal
-          title="Add task"
-          subtitle={`Lesson: ${lessonsById.get(modalState.lessonId)?.title ?? "Lesson"}`}
-          onClose={() => setModalState(null)}
-          onBack={() => openLessonDetail(modalState.lessonId)}
-        >
-          <form className="space-y-4" onSubmit={onCreateTask}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Task name</span>
-              <input
-                className="input"
-                placeholder="Task title"
-                value={taskTitle}
-                onChange={(event) => setTaskTitle(event.target.value)}
-                required
-              />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">Task text</span>
-              <textarea
-                className="input min-h-[200px]"
-                placeholder="Describe the task"
-                value={taskDescription}
-                onChange={(event) => setTaskDescription(event.target.value)}
-                required
-              />
-            </label>
-            <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">
-              Task system is required and will be created automatically for this task after saving.
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button className="btn-secondary" type="button" onClick={() => openLessonDetail(modalState.lessonId)}>
-                Back
-              </button>
-              <button className="btn-primary" type="submit" disabled={createTaskMutation.isPending}>
-                {createTaskMutation.isPending ? "Saving..." : "Create task"}
-              </button>
-            </div>
-          </form>
-        </ControlModal>
-      );
-    }
-
-    const task = tasksById.get(modalState.taskId);
-    if (!task) return null;
-
-    return (
-      <ControlModal
-        title={taskTitle || task.title}
-        subtitle={`Lesson: ${lessonsById.get(modalState.lessonId)?.title ?? "Lesson"}`}
-        onClose={() => setModalState(null)}
-        onBack={() => openLessonDetail(modalState.lessonId)}
-      >
-        <form className="space-y-4" onSubmit={onSaveTask}>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">Task name</span>
-            <input className="input" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} required />
-          </label>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">Task text</span>
-            <textarea className="input min-h-[200px]" value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} required />
-          </label>
-          <div className="rounded-xl border border-slate-200 p-4">
-            <div className="mb-3 text-sm font-medium">Task system</div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-slate-500">Each task has its own dedicated template system.</p>
-              <button className="btn-secondary" type="button" onClick={() => void openTaskSystemEditor(task.id)}>
-                Edit task system
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <button
-              className="btn-secondary"
-              type="button"
-              disabled={deleteTaskMutation.isPending}
-              onClick={() => onDeleteTask(task.id, modalState.lessonId)}
-            >
-              {deleteTaskMutation.isPending ? "Deleting..." : "Delete task"}
-            </button>
-            <button className="btn-primary" type="submit" disabled={updateTaskMutation.isPending}>
-              {updateTaskMutation.isPending ? "Saving..." : "Save changes"}
-            </button>
-          </div>
-        </form>
-      </ControlModal>
-    );
-  }
-
   if (isInitialLoading) {
     return (
       <section className="panel control-panel p-4">
@@ -844,75 +456,57 @@ export function ControlLessonsPage(): JSX.Element {
         </div>
       </div>
 
-      {renderModal()}
+      <ControlLessonsModal
+        modalState={modalState}
+        setModalState={setModalState}
+        sections={sections}
+        lessonsById={lessonsById}
+        tasksById={tasksById}
+        tasksByLesson={tasksByLesson}
+        sectionTitle={sectionTitle}
+        setSectionTitle={setSectionTitle}
+        sectionColor={sectionColor}
+        setSectionColor={setSectionColor}
+        lessonTitle={lessonTitle}
+        setLessonTitle={setLessonTitle}
+        lessonContent={lessonContent}
+        setLessonContent={setLessonContent}
+        lessonSectionId={lessonSectionId}
+        setLessonSectionId={setLessonSectionId}
+        taskTitle={taskTitle}
+        setTaskTitle={setTaskTitle}
+        taskDescription={taskDescription}
+        setTaskDescription={setTaskDescription}
+        getSectionLessons={getSectionLessons}
+        getSectionTaskCount={getSectionTaskCount}
+        getSectionTitleByKey={getSectionTitleByKey}
+        getSectionColorByKey={getSectionColorByKey}
+        openSectionDetail={openSectionDetail}
+        openSectionEdit={openSectionEdit}
+        openLessonCreate={openLessonCreate}
+        openLessonDetail={openLessonDetail}
+        openTaskCreate={openTaskCreate}
+        openTaskDetail={openTaskDetail}
+        onCreateSection={onCreateSection}
+        onSaveSection={onSaveSection}
+        onCreateLesson={onCreateLesson}
+        onSaveLesson={onSaveLesson}
+        onCreateTask={onCreateTask}
+        onSaveTask={onSaveTask}
+        onDeleteSection={onDeleteSection}
+        onDeleteLesson={onDeleteLesson}
+        onDeleteTask={onDeleteTask}
+        onOpenTaskSystemEditor={openTaskSystemEditor}
+        createSectionPending={createSectionMutation.isPending}
+        updateSectionPending={updateSectionMutation.isPending}
+        deleteSectionPending={deleteSectionMutation.isPending}
+        createLessonPending={createLessonMutation.isPending}
+        updateLessonPending={updateLessonMutation.isPending}
+        deleteLessonPending={deleteLessonMutation.isPending}
+        createTaskPending={createTaskMutation.isPending}
+        updateTaskPending={updateTaskMutation.isPending}
+        deleteTaskPending={deleteTaskMutation.isPending}
+      />
     </section>
   );
-}
-
-function ColorPicker({ value, onChange }: { value: string; onChange: (value: string) => void }): JSX.Element {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {DEFAULT_SECTION_COLORS.map((color) => (
-        <button
-          key={color}
-          type="button"
-          className={`h-7 w-7 rounded-full border border-slate-200 ${value === color ? "ring-2 ring-slate-400" : ""}`}
-          style={{ backgroundColor: color }}
-          onClick={() => onChange(color)}
-        />
-      ))}
-      <input
-        className="h-9 w-14 cursor-pointer rounded border border-slate-200 bg-transparent p-1"
-        type="color"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        title="Pick color"
-      />
-    </div>
-  );
-}
-
-function ControlModal({
-  title,
-  subtitle,
-  onClose,
-  onBack,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  onBack?: () => void;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6" onClick={onClose}>
-      <div
-        className="panel control-panel control-modal-panel max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl p-5 sm:p-6"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-5 flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              {onBack ? (
-                <button className="btn-secondary" type="button" onClick={onBack}>
-                  Back
-                </button>
-              ) : null}
-              <h3 className="control-section-heading text-xl font-semibold">{title}</h3>
-            </div>
-            {subtitle ? <p className="control-copy text-sm text-slate-500">{subtitle}</p> : null}
-          </div>
-          <button className="btn-secondary" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function sortByOrder<T extends { id: number; order_index?: number | null }>(left: T, right: T): number {
-  return (left.order_index ?? 0) - (right.order_index ?? 0) || left.id - right.id;
 }

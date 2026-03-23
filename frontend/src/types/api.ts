@@ -3,6 +3,11 @@ export type AuthTokenResponse = {
   token_type?: string;
 };
 
+export type OAuthProvidersResponse = {
+  google: boolean;
+  github: boolean;
+};
+
 export type UserPublic = {
   id: number;
   email: string;

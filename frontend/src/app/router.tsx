@@ -5,7 +5,7 @@ import { ControlLessonsPage } from "../pages/ControlLessonsPage";
 import { ControlUsersPage } from "../pages/ControlUsersPage";
 import { PendingReviewPage } from "../pages/PendingReviewPage";
 import { LandingPage } from "../pages/LandingPage";
-import { LabPage } from "../pages/LabPage";
+import { LabPage } from "../pages/lab";
 import { LessonDetailPage } from "../pages/LessonDetailPage";
 import { LessonsPage } from "../pages/LessonsPage";
 import { LoginPage } from "../pages/LoginPage";

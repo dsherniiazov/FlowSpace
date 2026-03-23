@@ -1,5 +1,5 @@
 import { api } from "../../lib/api";
-import { AuthTokenResponse, UserPublic } from "../../types/api";
+import { AuthTokenResponse, OAuthProvidersResponse, UserPublic } from "../../types/api";
 
 type LoginPayload = { email: string; password: string };
 type RegisterPayload = { email: string; password: string; name: string; last_name: string };
@@ -16,5 +16,10 @@ export async function login(payload: LoginPayload): Promise<AuthTokenResponse> {
 
 export async function register(payload: RegisterPayload): Promise<UserPublic> {
   const { data } = await api.post<UserPublic>("/auth/register", payload);
+  return data;
+}
+
+export async function fetchOAuthProviders(): Promise<OAuthProvidersResponse> {
+  const { data } = await api.get<OAuthProvidersResponse>("/auth/oauth/providers");
   return data;
 }

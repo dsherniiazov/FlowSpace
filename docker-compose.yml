@@ -9,22 +9,27 @@ services:
       POSTGRES_DB: flowspace
     ports:
       - "5432:5432"
+    env_file:
+      - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: flowspace_api
     restart: always
-    command: python run.py
+    command: python -m backend.run
     ports:
       - "8000:8000"
     env_file:
-      - .env.docker
+      - .env
     depends_on:
       - db
     volumes:
       - .:/app
+      - ${FILES_HOST_DIR:-./.docker-data/files}:${FILES_DIR:-/data/files}
 
   frontend:
     build:
@@ -32,10 +37,31 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: flowspace_frontend
     restart: always
+    env_file:
+      - .env
     ports:
       - "5173:5173"
     depends_on:
       - api
+
+  # test_all:
+  #   # Uncomment this service to run the full test suite manually:
+  #   # docker compose run --rm test_all
+  #   build:
+  #     context: .
+  #     dockerfile: backend/Dockerfile
+  #   container_name: flowspace_test_all
+  #   env_file:
+  #     - .env
+  #   depends_on:
+  #     - db
+  #   volumes:
+  #     - .:/app
+  #   command: >
+  #     sh -c "
+  #       pytest -q test/backend
+  #       # && cd frontend && npm ci && npm run test
+  #     "
 
 volumes:
   postgres_data:

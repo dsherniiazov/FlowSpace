@@ -1,271 +1,360 @@
 # FlowSpace
 
-FlowSpace is a full-stack educational simulation platform:
-- `backend`: FastAPI + SQLAlchemy + Alembic + PostgreSQL
-- `frontend`: React + TypeScript + Vite
+FlowSpace is a full-stack educational simulation platform.
 
-This guide is designed for a clean first-time setup and day-to-day development.
+- Backend: FastAPI + SQLAlchemy + Alembic + PostgreSQL
+- Frontend: React + TypeScript + Vite
 
-## Table of Contents
+For expanded step-by-step instructions (including hosting context), see:
 
-1. [What You Get](#what-you-get)
-2. [Tech Stack](#tech-stack)
-3. [Project Structure](#project-structure)
-4. [Prerequisites](#prerequisites)
-5. [Quick Start (Docker, Recommended)](#quick-start-docker-recommended)
-6. [Local Development (Without Docker)](#local-development-without-docker)
-7. [Environment Variables](#environment-variables)
-8. [Database Migrations](#database-migrations)
-9. [Running Tests](#running-tests)
-10. [OAuth Setup (Google/GitHub)](#oauth-setup-googlegithub)
-11. [Useful Endpoints](#useful-endpoints)
-12. [Troubleshooting](#troubleshooting)
+- <https://davinci.fmph.uniba.sk/~sherniiazov1/docs/index.html>
 
-## What You Get
+## Contents
 
-- JWT authentication (email/password)
-- OAuth login support (Google, GitHub)
-- Lesson/task/system management APIs
-- Simulation runs API
-- React frontend UI (Vite dev server)
-- Alembic migrations for schema management
+1. Overview
+2. Tech Stack
+3. Project Structure
+4. Prerequisites
+5. Docker Deployment on Localhost
+6. Docker Deployment on a Server and Domain
+7. Local Deployment Without Docker
+8. Environment Variables
+9. Database Migrations
+10. Testing
+11. Troubleshooting
+12. Security and Deployment Best Practices
+
+## Overview
+
+Main features:
+
+- JWT authentication with email/password
+- Optional OAuth login (Google and GitHub)
+- Lessons, tasks, systems, progress, simulation runs
+- Auto-seeding of initial learning content
+- Docker-first workflow
 
 ## Tech Stack
 
-### Backend
-- Python `3.13`
+Backend:
+
+- Python 3.13
 - FastAPI
 - SQLAlchemy 2.x
 - Alembic
 - PostgreSQL 17
 
-### Frontend
-- Node.js `22` (recommended)
+Frontend:
+
+- Node.js 22
 - React 18
 - TypeScript
 - Vite 5
 
 ## Project Structure
 
-```text
-FlowSpace/
-├─ src/                   # Backend application code
-├─ alembic/               # DB migrations
-├─ tests/                 # Backend tests
-├─ frontend/              # Frontend app
-├─ run.py                 # Backend entrypoint (runs migrations optionally)
-├─ docker-compose.yml     # Full stack (db + api + frontend)
-└─ docker-compose.test.yml# Test stack
-```
+~~~text
+flowspace_dev/
+├─ backend/
+│  ├─ alembic/
+│  ├─ alembic.ini
+│  ├─ run.py
+│  └─ Dockerfile
+├─ frontend/
+├─ test/
+│  ├─ backend/
+│  └─ frontend/
+├─ docker-compose.yml
+├─ requirements.txt
+├─ .env.example
+└─ .env
+~~~
 
 ## Prerequisites
 
-Install before you start:
-- Docker + Docker Compose (for easiest setup)
-- OR for local run:
-  - Python `3.13`
-  - Node.js `22`
-  - PostgreSQL `17` (or compatible)
+For Docker deployment:
 
-## Quick Start (Docker, Recommended)
+- Docker Engine 24+
+- Docker Compose v2
 
-This is the fastest way to run everything from zero.
+For local non-Docker deployment:
 
-1. Clone repository and open it:
-   ```bash
-   git clone <your-repo-url>
-   cd FlowSpace
-   ```
-2. Start all services:
-   ```bash
-   docker compose up --build
-   ```
-3. Open apps:
-   - Frontend: `http://localhost:5173`
-   - Backend API: `http://localhost:8000`
-   - Swagger docs: `http://localhost:8000/docs`
-4. Stop services:
-   ```bash
-   docker compose down
-   ```
+- Python 3.13
+- Node.js 22
+- PostgreSQL 17
 
-Notes:
-- Backend uses `.env.docker` in Docker mode.
-- Database migrations run automatically in container startup (`RUN_MIGRATIONS=true`).
+## Docker Deployment on Localhost
 
-## Local Development (Without Docker)
+This is the recommended path for development and quick validation.
 
-Run backend and frontend separately for fastest iteration.
+1. Clone repository.
 
-### 1. Backend setup
+~~~bash
+git clone <repo-url>
+cd flowspace_dev
+~~~
 
-1. Create backend env file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Edit `.env` and set at least:
-   - `DB_URL` to your local PostgreSQL
-   - `SECRET_KEY` to a strong random value
-3. Create virtual environment and install dependencies:
-   ```bash
-   python3.13 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-4. Run migrations:
-   ```bash
-   alembic upgrade head
-   ```
-5. Start backend:
-   ```bash
-   python run.py
-   ```
+1. Create environment file.
 
-Backend runs on `http://localhost:8000`.
+~~~bash
+cp .env.example .env
+~~~
 
-### 2. Frontend setup
+1. Ensure Docker-safe bind host in .env.
 
-1. Install dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
-2. Create frontend env file:
-   ```bash
-   cp .env.example .env.local
-   ```
-3. Start frontend dev server:
-   ```bash
-   npm run dev
-   ```
+- BACKEND_HOST must be 0.0.0.0 in Docker
+- DB_URL host must be db (service name), not localhost
 
-Frontend runs on `http://localhost:5173`.
+1. Build and start all services.
+
+~~~bash
+docker compose up -d --build
+~~~
+
+1. Verify services.
+
+~~~bash
+docker compose ps
+~~~
+
+1. Open application.
+
+- Frontend: <http://localhost:5173>
+- API docs: <http://localhost:8000/docs>
+
+1. Stop stack when needed.
+
+~~~bash
+docker compose down
+~~~
+
+## Docker Deployment on a Server and Domain
+
+This section describes a production-style deployment using Docker Compose.
+
+### A. Server Preparation
+
+1. Prepare Linux server (Ubuntu/Debian recommended).
+2. Install Docker and Compose plugin.
+3. Open firewall ports:
+
+- 22 (SSH)
+- 80 (HTTP)
+- 443 (HTTPS)
+
+Only expose 5173 and 8000 directly if you explicitly need them.
+
+### B. DNS Setup
+
+Create DNS records pointing to server IP.
+
+Typical options:
+
+- app.example.com -> frontend
+- api.example.com -> backend
+
+Or use one domain and route by reverse proxy paths.
+
+### C. Application Configuration
+
+Use .env in project root.
+
+Important values for Docker on server:
+
+- BACKEND_HOST=0.0.0.0
+- BACKEND_PORT=8000
+- RUN_MIGRATIONS=true for first deploy
+- DB_URL=postgresql+psycopg://admin:admin@db:5432/flowspace
+- CORS_ORIGINS must include your real frontend domain(s)
+
+Example:
+
+~~~dotenv
+CORS_ORIGINS=https://app.example.com,https://www.app.example.com
+~~~
+
+### D. Start Services
+
+~~~bash
+docker compose up -d --build
+~~~
+
+### E. Reverse Proxy and TLS
+
+Recommended: place Nginx or Caddy in front of containers.
+
+Example Nginx virtual host approach:
+
+- app.example.com -> proxy to frontend:5173
+- api.example.com -> proxy to api:8000
+
+Then issue TLS certificates (for example, Certbot for Nginx).
+
+If you prefer one domain, route by path:
+
+- / -> frontend
+- /api -> backend
+
+In that case, make sure frontend API base URL aligns with proxy routing.
+
+### F. Post-Deploy Validation
+
+Check:
+
+- <https://api.example.com/docs> opens
+- Frontend can login/register
+- No CORS errors in browser console
+- docker compose logs api has no startup exceptions
+
+## Local Deployment Without Docker
+
+Use this mode when you need direct backend/frontend debugging.
+
+### 1. Backend
+
+~~~bash
+cp .env.example .env
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic -c backend/alembic.ini upgrade head
+python -m backend.run
+~~~
+
+Backend runs on <http://localhost:8000>
+
+### 2. Frontend
+
+~~~bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+~~~
+
+Frontend runs on <http://localhost:5173>
 
 ## Environment Variables
 
-### Backend (`.env`)
+Use .env.example as source of truth.
 
-Use `.env.example` as a template.
+Core required:
 
-Required:
-- `DB_URL`
-- `SECRET_KEY`
+- DB_URL
+- SECRET_KEY
 
-Commonly used:
-- `RUN_MIGRATIONS` (`true`/`false`)
-- `ALGORITHM` (default `HS256`)
-- `ACCESS_TOKEN_EXPIRE_MINUTES` (default `300`)
-- `DB_ECHO` (`true` for SQL logs)
-- `CORS_ORIGINS` (comma-separated)
+Runtime:
 
-Optional (OAuth):
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GITHUB_CLIENT_ID`
-- `GITHUB_CLIENT_SECRET`
+- RUN_MIGRATIONS
+- BACKEND_HOST
+- BACKEND_PORT
+- CORS_ORIGINS
 
-### Frontend (`frontend/.env.local`)
+Storage:
 
-Use `frontend/.env.example` as a template.
+- FILES_DIR
+- FILES_HOST_DIR (used by docker-compose bind mount)
 
-- `VITE_API_BASE_URL` (default `http://localhost:8000`)
-- `VITE_ADMIN_EMAILS` (comma-separated list of admin emails)
+Optional OAuth:
+
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GITHUB_CLIENT_ID
+- GITHUB_CLIENT_SECRET
+
+Note about OAuth buttons:
+
+- Login/register pages show Google or GitHub buttons only when matching provider credentials are configured on backend.
 
 ## Database Migrations
 
-Apply latest migrations:
+Apply latest:
 
-```bash
-alembic upgrade head
-```
+~~~bash
+alembic -c backend/alembic.ini upgrade head
+~~~
 
-Create a new migration after model changes:
+Create new migration:
 
-```bash
-alembic revision --autogenerate -m "describe_change"
-```
+~~~bash
+alembic -c backend/alembic.ini revision --autogenerate -m "describe_change"
+~~~
 
-Rollback one migration:
+Rollback one revision:
 
-```bash
-alembic downgrade -1
-```
+~~~bash
+alembic -c backend/alembic.ini downgrade -1
+~~~
 
-## Running Tests
+## Testing
 
-### Option A: Local
+Backend tests:
 
-```bash
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-pytest -q
-```
+~~~bash
+pytest -q test/backend
+~~~
 
-### Option B: Docker test stack
+Docker smoke check:
 
-```bash
-docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
-```
-
-## OAuth Setup (Google/GitHub)
-
-OAuth is optional. Email/password auth works without it.
-
-Configure provider credentials in backend `.env`:
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
-
-Use these callback URLs in provider settings:
-- Google: `http://localhost:8000/auth/oauth/google/callback`
-- GitHub: `http://localhost:8000/auth/oauth/github/callback`
-
-## Useful Endpoints
-
-- Swagger UI: `GET /docs`
-- OpenAPI JSON: `GET /openapi.json`
-- Auth login: `POST /auth/login`
-- Auth register: `POST /auth/register`
-- OAuth start: `GET /auth/oauth/{provider}/login`
-
-Main authenticated resource groups:
-- `/users`
-- `/systems`
-- `/lessons`
-- `/sections`
-- `/lesson-tasks`
-- `/progress`
-- `/task-progress`
-- `/runs`
+~~~bash
+docker compose up -d --build
+docker compose logs --tail=100 api
+~~~
 
 ## Troubleshooting
 
-### Database connection error on startup
+### Error: Cannot assign requested address
 
-- Verify PostgreSQL is running.
-- Check `DB_URL` host/port/credentials.
-- For Docker mode, host must be `db` (not `localhost`).
+Symptom:
+
+- backend log contains Errno 99
+
+Cause:
+
+- BACKEND_HOST set to external host IP inside Docker container
+
+Fix:
+
+- set BACKEND_HOST=0.0.0.0
 
 ### CORS errors in browser
 
-- Ensure frontend URL is included in backend `CORS_ORIGINS`.
-- Default local values include `http://localhost:5173` and `http://127.0.0.1:5173`.
+Cause:
 
-### OAuth says provider not configured
+- frontend origin missing in CORS_ORIGINS
 
-- Missing or empty provider credentials in `.env`.
-- Restart backend after changing env vars.
+Fix:
 
-### Port already in use
+- add exact frontend URL(s) to CORS_ORIGINS and restart api
 
-- Backend default: `8000`
-- Frontend default: `5173`
-- PostgreSQL default: `5432`
+### OAuth provider not configured
 
-Stop conflicting processes or remap ports.
+Cause:
 
-## Development Best Practices Used in This Project
+- provider keys are empty or commented out
 
-- Keep secrets out of git (`.env` is ignored).
-- Use migration files for all schema changes.
-- Keep local and Docker environments consistent.
-- Prefer `RUN_MIGRATIONS=false` in production and run migrations explicitly in CI/CD.
+Fix:
+
+- set provider credentials in .env and restart api
+
+### DB schema errors on startup
+
+Cause:
+
+- migrations not applied
+
+Fix:
+
+- set RUN_MIGRATIONS=true in Docker, or run alembic upgrade head manually
+
+## Security and Deployment Best Practices
+
+- Keep .env out of git and use strong SECRET_KEY in production.
+- Use HTTPS on public deployments.
+- Restrict CORS_ORIGINS to real domains only.
+- Prefer reverse proxy (Nginx/Caddy) over exposing internal service ports directly.
+- Keep RUN_MIGRATIONS=true for bootstrap, then move to explicit migration step in CI/CD for controlled production rollouts.
+
+## More Detailed Documentation
+
+- <https://davinci.fmph.uniba.sk/~sherniiazov1/docs/index.html>
