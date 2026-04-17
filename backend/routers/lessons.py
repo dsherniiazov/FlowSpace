@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from backend.services.lesson import LessonService
-from backend.schemas.lessons import LessonCreate, LessonOut, LessonUpdate
 from backend.auth.dependencies import get_current_user
+from backend.schemas.lessons import LessonCreate, LessonOut, LessonUpdate
+from backend.services.lesson import LessonService
 from backend.utils.dependencies import get_db
 
 router = APIRouter(prefix="/lessons", tags=["lessons"], dependencies=[Depends(get_current_user)])
@@ -21,17 +21,11 @@ def list_published_lessons(db: Session = Depends(get_db)) -> list[LessonOut]:
 
 @router.get("/{lesson_id}", response_model=LessonOut)
 def get_lesson(lesson_id: int, db: Session = Depends(get_db)) -> LessonOut:
-    try:
-        return LessonService.get(db, lesson_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    return LessonService.get(db, lesson_id)
 
 
 @router.post("", response_model=LessonOut)
-def create_lesson(
-    data: LessonCreate,
-    db: Session = Depends(get_db),
-):
+def create_lesson(data: LessonCreate, db: Session = Depends(get_db)) -> LessonOut:
     return LessonService.create(
         db,
         title=data.title,
@@ -42,35 +36,15 @@ def create_lesson(
 
 
 @router.put("/{lesson_id}", response_model=LessonOut)
-def update_lesson(
-    lesson_id: int,
-    data: LessonUpdate,
-    db: Session = Depends(get_db),
-):
-    try:
-        fields = data.model_dump(exclude_unset=True)
-        return LessonService.update(db, lesson_id, fields)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+def update_lesson(lesson_id: int, data: LessonUpdate, db: Session = Depends(get_db)) -> LessonOut:
+    return LessonService.update(db, lesson_id, data.model_dump(exclude_unset=True))
 
 
 @router.post("/{lesson_id}/publish", response_model=LessonOut)
-def publish_lesson(
-    lesson_id: int,
-    db: Session = Depends(get_db),
-):
-    try:
-        return LessonService.publish(db, lesson_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+def publish_lesson(lesson_id: int, db: Session = Depends(get_db)) -> LessonOut:
+    return LessonService.publish(db, lesson_id)
 
 
 @router.delete("/{lesson_id}", response_model=LessonOut)
-def delete_lesson(
-    lesson_id: int,
-    db: Session = Depends(get_db),
-):
-    try:
-        return LessonService.delete(db, lesson_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+def delete_lesson(lesson_id: int, db: Session = Depends(get_db)) -> LessonOut:
+    return LessonService.delete(db, lesson_id)

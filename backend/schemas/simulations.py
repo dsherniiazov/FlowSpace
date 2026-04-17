@@ -15,7 +15,7 @@ class RunCreate(BaseModel):
     steps: int = Field(gt=0)
     engine_version: str = "euler_v1"
     seed: int | None = None
-    steps_data: list[RunStepCreate] | None = None
+    steps_data: list[RunStepCreate]
 
 
 class RunSummary(BaseModel):

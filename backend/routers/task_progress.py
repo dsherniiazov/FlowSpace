@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import get_current_user
@@ -7,6 +7,7 @@ from backend.schemas.lesson_tasks import CompletedTaskOut
 from backend.services.lesson_task import LessonTaskService
 from backend.services.task_progress import TaskProgressService
 from backend.utils.dependencies import get_db
+from backend.utils.errors import NotFoundError
 
 router = APIRouter(prefix="/task-progress", tags=["task-progress"], dependencies=[Depends(get_current_user)])
 
@@ -25,10 +26,7 @@ def complete_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        LessonTaskService.get(db, task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    LessonTaskService.get(db, task_id)
     return TaskProgressService.complete_task(db, current_user.id, task_id)
 
 
@@ -40,5 +38,5 @@ def uncomplete_task(
 ):
     progress = TaskProgressService.uncomplete_task(db, current_user.id, task_id)
     if not progress:
-        raise HTTPException(status_code=404, detail="Task completion not found")
+        raise NotFoundError("Task completion not found")
     return progress

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.config import settings
 from backend.services.user import UserService
 from backend.utils.dependencies import get_db
+from backend.utils.errors import DomainError
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -41,7 +42,7 @@ def get_current_user(
 
     try:
         user = UserService.get(db, int(user_id))
-    except ValueError:
+    except DomainError:
         raise credentials_exception
     return user
 
@@ -50,6 +51,6 @@ def get_current_admin(user=Depends(get_current_user)):
     if not getattr(user, "is_admin", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
+            detail="Teacher access required",
         )
     return user

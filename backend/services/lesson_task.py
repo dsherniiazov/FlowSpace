@@ -4,6 +4,8 @@ from backend.models.lesson_tasks import LessonTask
 from backend.models.systems import SystemModel
 from backend.services.lesson import LessonService
 from backend.services.system import SystemModelService
+from backend.utils.db import commit, commit_and_refresh
+from backend.utils.errors import NotFoundError
 
 
 DEFAULT_TASK_SYSTEM_GRAPH = {"nodes": [], "edges": []}
@@ -19,7 +21,7 @@ class LessonTaskService:
         order_index: int | None = None,
     ) -> LessonTask:
         LessonService.get(db, lesson_id)
-        template_title = SystemModelService._sanitize_title(title) or "Task system"
+        template_title = SystemModelService.sanitize_title(title) or "Task system"
         template = SystemModel(
             owner_id=None,
             lesson_id=lesson_id,
@@ -38,19 +40,13 @@ class LessonTaskService:
             order_index=order_index if order_index is not None else 0,
         )
         db.add(task)
-        try:
-            db.commit()
-            db.refresh(task)
-        except Exception:
-            db.rollback()
-            raise
-        return task
+        return commit_and_refresh(db, task)
 
     @staticmethod
     def get(db: Session, task_id: int) -> LessonTask:
         task = db.query(LessonTask).filter(LessonTask.id == task_id).first()
         if not task:
-            raise ValueError(f"Task with id {task_id} not found")
+            raise NotFoundError(f"Task with id {task_id} not found")
         return task
 
     @staticmethod
@@ -72,13 +68,7 @@ class LessonTaskService:
         fields.pop("system_id", None)
         for key, value in fields.items():
             setattr(task, key, value)
-        try:
-            db.commit()
-            db.refresh(task)
-        except Exception:
-            db.rollback()
-            raise
-        return task
+        return commit_and_refresh(db, task)
 
     @staticmethod
     def delete(db: Session, task_id: int) -> LessonTask:
@@ -87,11 +77,7 @@ class LessonTaskService:
         db.delete(task)
         db.flush()
         db.delete(template)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        commit(db)
         return task
 
     @staticmethod

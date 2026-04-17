@@ -49,7 +49,7 @@ export function RegisterPage(): JSX.Element {
   }
 
   return (
-    <div className="auth-page min-h-screen px-4 py-10">
+    <div className="auth-page page-enter min-h-screen px-4 py-10">
       <AuthCard title="Register" submitLabel="Create account" mode="register" busy={busy} error={error} onSubmit={submit} />
       <div className="mx-auto mt-4 max-w-md space-y-2">
         {oauthProviders.google ? (

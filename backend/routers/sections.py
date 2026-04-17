@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import get_current_user
@@ -16,10 +16,7 @@ def list_sections(db: Session = Depends(get_db)):
 
 @router.get("/{section_id}", response_model=SectionOut)
 def get_section(section_id: int, db: Session = Depends(get_db)):
-    try:
-        return SectionService.get(db, section_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return SectionService.get(db, section_id)
 
 
 @router.post("", response_model=SectionOut)
@@ -35,15 +32,9 @@ def create_section(data: SectionCreate, db: Session = Depends(get_db)):
 
 @router.put("/{section_id}", response_model=SectionOut)
 def update_section(section_id: int, data: SectionUpdate, db: Session = Depends(get_db)):
-    try:
-        return SectionService.update(db, section_id, data.model_dump(exclude_unset=True))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return SectionService.update(db, section_id, data.model_dump(exclude_unset=True))
 
 
 @router.delete("/{section_id}", response_model=SectionOut)
 def delete_section(section_id: int, db: Session = Depends(get_db)):
-    try:
-        return SectionService.delete(db, section_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return SectionService.delete(db, section_id)

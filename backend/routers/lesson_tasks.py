@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import get_current_user
@@ -23,10 +23,7 @@ def list_tasks(
 
 @router.get("/{task_id}", response_model=LessonTaskOut)
 def get_task(task_id: int, db: Session = Depends(get_db)):
-    try:
-        return LessonTaskService.get(db, task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return LessonTaskService.get(db, task_id)
 
 
 @router.post("", response_model=LessonTaskOut)
@@ -42,18 +39,12 @@ def create_task(data: LessonTaskCreate, db: Session = Depends(get_db)):
 
 @router.put("/{task_id}", response_model=LessonTaskOut)
 def update_task(task_id: int, data: LessonTaskUpdate, db: Session = Depends(get_db)):
-    try:
-        return LessonTaskService.update(db, task_id, data.model_dump(exclude_unset=True))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return LessonTaskService.update(db, task_id, data.model_dump(exclude_unset=True))
 
 
 @router.delete("/{task_id}", response_model=LessonTaskOut)
 def delete_task(task_id: int, db: Session = Depends(get_db)):
-    try:
-        return LessonTaskService.delete(db, task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return LessonTaskService.delete(db, task_id)
 
 
 @router.post("/{task_id}/start", response_model=SystemOut)
@@ -62,9 +53,4 @@ def start_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        return LessonTaskService.start_for_user(db, task_id, current_user.id)
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = status.HTTP_404_NOT_FOUND if "not found" in detail.lower() else status.HTTP_400_BAD_REQUEST
-        raise HTTPException(status_code=status_code, detail=detail)
+    return LessonTaskService.start_for_user(db, task_id, current_user.id)

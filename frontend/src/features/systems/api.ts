@@ -59,7 +59,14 @@ export async function fetchPendingReviewSystems(): Promise<SystemWithOwner[]> {
   return data;
 }
 
-export async function markSystemReviewed(systemId: number): Promise<SystemModel> {
-  const { data } = await api.post<SystemModel>(`/systems/pending-review/${systemId}/mark-reviewed`);
+export async function markSystemReviewed(
+  systemId: number,
+  comment?: string,
+): Promise<SystemModel> {
+  const payload = comment && comment.trim() ? { comment: comment.trim() } : undefined;
+  const { data } = await api.post<SystemModel>(
+    `/systems/pending-review/${systemId}/mark-reviewed`,
+    payload,
+  );
   return data;
 }

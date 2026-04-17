@@ -1,13 +1,12 @@
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import joinedload
-from typing import Optional
+from sqlalchemy.orm import Session, joinedload
 
 from backend.models.lessons import Lesson
 from backend.services.section import SectionService
+from backend.utils.db import commit, commit_and_refresh
+from backend.utils.errors import NotFoundError
 
 
 class LessonService:
-
     @staticmethod
     def create(
         db: Session,
@@ -18,7 +17,6 @@ class LessonService:
     ) -> Lesson:
         if section_id is not None:
             SectionService.get(db, section_id)
-
         lesson = Lesson(
             title=title,
             content_markdown=content_markdown,
@@ -26,13 +24,7 @@ class LessonService:
             order_index=order_index,
         )
         db.add(lesson)
-        try:
-            db.commit()
-            db.refresh(lesson)
-        except Exception:
-            db.rollback()
-            raise
-        return lesson
+        return commit_and_refresh(db, lesson)
 
     @staticmethod
     def get(db: Session, lesson_id: int) -> Lesson:
@@ -43,7 +35,7 @@ class LessonService:
             .first()
         )
         if not lesson:
-            raise ValueError(f"Lesson with id {lesson_id} not found")
+            raise NotFoundError(f"Lesson with id {lesson_id} not found")
         return lesson
 
     @staticmethod
@@ -76,32 +68,18 @@ class LessonService:
             SectionService.get(db, int(fields["section_id"]))
         for key, value in fields.items():
             setattr(lesson, key, value)
-        try:
-            db.commit()
-            db.refresh(lesson)
-        except Exception:
-            db.rollback()
-            raise
-        return lesson
+        return commit_and_refresh(db, lesson)
 
     @staticmethod
     def publish(db: Session, lesson_id: int) -> Lesson:
         lesson = LessonService.get(db, lesson_id)
         lesson.is_published = True
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        commit(db)
         return lesson
 
     @staticmethod
     def delete(db: Session, lesson_id: int) -> Lesson:
         lesson = LessonService.get(db, lesson_id)
         db.delete(lesson)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        commit(db)
         return lesson

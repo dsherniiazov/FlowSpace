@@ -25,9 +25,7 @@ export async function deleteUser(userId: number): Promise<UserPublic> {
 export async function uploadUserAvatar(userId: number, file: File): Promise<UserPublic> {
   const formData = new FormData();
   formData.append("file", file);
-  const { data } = await api.post<UserPublic>(`/users/${userId}/avatar`, formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+  const { data } = await api.post<UserPublic>(`/users/${userId}/avatar`, formData);
   return data;
 }
 

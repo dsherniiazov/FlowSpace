@@ -7,3 +7,4 @@ from .lesson_tasks import LessonTask
 from .user_task_progress import UserTaskProgress
 from .runs import SimulationRun
 from .run_steps import SimulationRunStep
+from .notifications import Notification

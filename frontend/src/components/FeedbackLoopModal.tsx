@@ -6,12 +6,9 @@ import {
   ReinforcingPolarity,
 } from "../store/labStore";
 import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
+import type { ConnectedFlowOption } from "../pages/lab/types";
 
-export type ConnectedFlowOption = {
-  id: string;
-  label: string;
-  direction: "inflow" | "outflow";
-};
+export type { ConnectedFlowOption } from "../pages/lab/types";
 
 export type BalancingSubmitPayload = {
   boundaryType: BoundaryType;
@@ -21,6 +18,9 @@ export type BalancingSubmitPayload = {
   operation: LoopOperation;
   delayEnabled: boolean;
   delaySteps: number;
+  /** Optional user-provided display name for the whole loop. Shown in the
+   *  editor panel of any auxiliary node and on the simulation chart. */
+  name?: string;
   correctiveLabel?: string;
 };
 
@@ -32,6 +32,7 @@ export type ReinforcingSubmitPayload = {
   delaySteps: number;
   growthLimit?: number;
   clampNonNegative: boolean;
+  name?: string;
   multiplierLabel?: string;
 };
 
@@ -89,6 +90,7 @@ export function FeedbackLoopModal({
   const [growthLimitInput, setGrowthLimitInput] = useState("");
   const [clampNonNegative, setClampNonNegative] = useState(true);
   const [multiplierLabel, setMultiplierLabel] = useState("Multiplier");
+  const [loopName, setLoopName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const hasConnectedFlow = connectedFlows.length > 0;
@@ -114,6 +116,11 @@ export function FeedbackLoopModal({
     );
     setClampNonNegative(initialReinforcingValues?.clampNonNegative !== false);
     setMultiplierLabel(initialReinforcingValues?.multiplierLabel ?? "Multiplier");
+    // Loop name is shared across tabs; prefer whichever side of initial values
+    // carries it (edit mode will only populate one of the two).
+    setLoopName(
+      initialBalancingValues?.name ?? initialReinforcingValues?.name ?? "",
+    );
     setError(null);
   }, [isOpen, connectedFlows, initialTab, initialBalancingValues, initialReinforcingValues]);
 
@@ -186,6 +193,7 @@ export function FeedbackLoopModal({
         operation,
         delayEnabled,
         delaySteps: delayEnabled ? delaySteps : 0,
+        name: loopName.trim() || undefined,
         correctiveLabel: correctiveLabel.trim() || undefined,
       });
     } else {
@@ -216,6 +224,7 @@ export function FeedbackLoopModal({
         delaySteps: reinforcingDelayEnabled ? Math.max(1, Math.floor(delayStepsParsed ?? 1)) : 0,
         growthLimit: growthLimitInput.trim().length > 0 ? growthLimitParsed ?? undefined : undefined,
         clampNonNegative,
+        name: loopName.trim() || undefined,
         multiplierLabel: multiplierLabel.trim() || undefined,
       });
     }
@@ -240,6 +249,22 @@ export function FeedbackLoopModal({
             Close
           </button>
         </div>
+
+        <label className="lab-field text-sm lab-loop-name-field">
+          Loop name (optional)
+          <input
+            className="lab-input mt-1"
+            type="text"
+            value={loopName}
+            onChange={(e) => setLoopName(e.target.value)}
+            placeholder="e.g. Inventory stabilizer"
+            maxLength={80}
+          />
+          <span className="lab-muted text-xs mt-1 block">
+            Shown in the side panel when any loop node is selected and on the
+            simulation chart as this loop&apos;s discrepancy label.
+          </span>
+        </label>
 
         <div className="lab-loop-tabs" role="tablist" aria-label="Feedback loop type">
           <button

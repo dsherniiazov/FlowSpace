@@ -85,7 +85,7 @@ export function TaskExecutionPage(): JSX.Element {
     <section className="panel p-6">
       <div className="mb-4 flex items-center justify-between gap-2">
         <h2 className="text-2xl font-medium text-zinc-100">{task.title}</h2>
-        <button className="btn-secondary" onClick={() => navigate(`/app/lessons/${task.lesson_id}`)}>Back to lesson</button>
+        <button className="btn-secondary" onClick={() => navigate("/app/lessons")}>All lessons</button>
       </div>
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">

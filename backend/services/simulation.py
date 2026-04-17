@@ -1,11 +1,12 @@
 from sqlalchemy.orm import Session
 
-from backend.models.runs import SimulationRun
 from backend.models.run_steps import SimulationRunStep
+from backend.models.runs import SimulationRun
+from backend.utils.db import commit, commit_and_refresh
+from backend.utils.errors import NotFoundError
 
 
 class SimulationRunService:
-
     @staticmethod
     def create_run(
         db: Session,
@@ -16,7 +17,7 @@ class SimulationRunService:
         steps: int,
         engine_version: str,
         seed: int | None,
-        steps_data: list[dict] | None,
+        steps_data: list[dict],
     ) -> SimulationRun:
         run = SimulationRun(
             user_id=user_id,
@@ -29,23 +30,7 @@ class SimulationRunService:
             status="running",
         )
         db.add(run)
-        try:
-            db.commit()
-            db.refresh(run)
-        except Exception:
-            db.rollback()
-            raise
-
-        if not steps_data:
-            run.status = "failed"
-            run.error_message = "Simulation engine not implemented"
-            try:
-                db.commit()
-                db.refresh(run)
-            except Exception:
-                db.rollback()
-                raise
-            return run
+        commit_and_refresh(db, run)
 
         step_rows = [
             SimulationRunStep(
@@ -59,19 +44,12 @@ class SimulationRunService:
         db.add_all(step_rows)
         run.status = "completed"
         try:
-            db.commit()
-            db.refresh(run)
+            commit_and_refresh(db, run)
         except Exception as exc:
-            db.rollback()
             run.status = "failed"
             run.error_message = str(exc)
-            try:
-                db.add(run)
-                db.commit()
-                db.refresh(run)
-            except Exception:
-                db.rollback()
-                raise
+            db.add(run)
+            commit_and_refresh(db, run)
         return run
 
     @staticmethod
@@ -82,7 +60,7 @@ class SimulationRunService:
             .first()
         )
         if not run:
-            raise ValueError(f"Run with id {run_id} not found")
+            raise NotFoundError(f"Run with id {run_id} not found")
         return run
 
     @staticmethod
@@ -117,16 +95,12 @@ class SimulationRunService:
             .first()
         )
         if not step:
-            raise ValueError("Step not found")
+            raise NotFoundError("Step not found")
         return step
 
     @staticmethod
     def delete(db: Session, run_id: int, user_id: int) -> SimulationRun:
         run = SimulationRunService.get_for_user(db, run_id, user_id)
         db.delete(run)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        commit(db)
         return run

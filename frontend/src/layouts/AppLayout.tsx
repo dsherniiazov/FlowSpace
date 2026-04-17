@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
+import { PageTransition } from "../components/PageTransition";
+import { TutorialOverlay } from "../components/TutorialOverlay";
 import { fetchLessons } from "../features/lessons/api";
 import { fetchLessonTasks } from "../features/lessonTasks/api";
+import { fetchUnreadNotificationCount } from "../features/notifications/api";
 import { fetchSections } from "../features/sections/api";
 import { fetchCompletedTasks } from "../features/taskProgress/api";
 import { getAvatarUrl } from "../features/users/api";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
+import { useTutorialStore } from "../store/tutorialStore";
 import { Lesson, LessonTask, Section, UserPublic } from "../types/api";
 
 const navBase = "app-nav-link";
@@ -70,6 +74,14 @@ export function AppLayout(): JSX.Element {
     },
     enabled: !!userId,
   });
+  const unreadInboxQuery = useQuery({
+    queryKey: ["notifications-unread-count", userId],
+    queryFn: fetchUnreadNotificationCount,
+    enabled: !!userId,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const unreadInboxCount = unreadInboxQuery.data ?? 0;
 
   const lessons: Lesson[] = useMemo(
     () => [...(lessonsQuery.data ?? [])].sort((a, b) => Number(a.order_index ?? Number.MAX_SAFE_INTEGER) - Number(b.order_index ?? Number.MAX_SAFE_INTEGER)),
@@ -166,9 +178,16 @@ export function AppLayout(): JSX.Element {
           <div className="app-sidebar-section">
             <div className="app-sidebar-label">Workspace</div>
             <nav className="app-nav">
-              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/lessons">Lessons</NavLink>
-              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/lab">Lab</NavLink>
-              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/profile">Profile</NavLink>
+              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/lessons" data-tutorial="nav-lessons">Lessons</NavLink>
+              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/lab" data-tutorial="nav-lab">Lab</NavLink>
+              <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/profile" data-tutorial="nav-profile">
+                <span>Profile</span>
+                {unreadInboxCount > 0 ? (
+                  <span className="app-nav-badge" aria-label={`${unreadInboxCount} unread inbox messages`}>
+                    {unreadInboxCount}
+                  </span>
+                ) : null}
+              </NavLink>
               {isAdmin ? (
                 <NavLink className={({ isActive }) => `${navBase} ${isActive ? "active" : ""}`} to="/app/control">Control</NavLink>
               ) : null}
@@ -185,7 +204,7 @@ export function AppLayout(): JSX.Element {
               {sidebarAvatarUrl ? <img src={sidebarAvatarUrl} alt="Profile avatar" className="block h-full w-full rounded-full object-cover" /> : sidebarInitial}
             </div>
             <div className="user-chip-meta">
-              <div className="user-chip-title">{isAdmin ? "Administrator" : "Student"}</div>
+              <div className="user-chip-title">{isAdmin ? "Teacher" : "Student"}</div>
               <div className="user-chip-subtitle">{email}</div>
             </div>
           </button>
@@ -196,7 +215,12 @@ export function AppLayout(): JSX.Element {
         {!isLessonFocusMode ? (
           <header className="app-topbar">
             {sidebarCollapsed ? (
-              <button className="app-topbar-logo" onClick={() => setSidebarCollapsed(false)} aria-label="Open sidebar">
+              <button
+                className="app-topbar-logo"
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="Open sidebar"
+                data-tutorial="app-logo"
+              >
                 <img src={logoSrc} alt="FlowSpace" className="app-brand-logo" />
               </button>
             ) : (
@@ -235,7 +259,7 @@ export function AppLayout(): JSX.Element {
                   navigate("/");
                 }}
               >
-                Exit
+                Logout
               </button>
             </div>
           </header>
@@ -246,9 +270,37 @@ export function AppLayout(): JSX.Element {
           </button>
         ) : null}
         <main className="app-content">
-          <Outlet context={{ setLessonHeader }} />
+          <PageTransition>
+            <Outlet context={{ setLessonHeader }} />
+          </PageTransition>
         </main>
       </div>
+      <GlobalTutorialOverlay />
     </div>
   );
+}
+
+function GlobalTutorialOverlay(): JSX.Element | null {
+  const location = useLocation();
+  const suppressed = useTutorialStore((s) => s.overlaySuppressed);
+  const onFinish = useTutorialStore((s) => s.onFinishCallback);
+  const active = useTutorialStore((s) => s.active);
+  const lessonId = useTutorialStore((s) => s.lessonId);
+  const reset = useTutorialStore((s) => s.reset);
+
+  // If the user navigates away from a tutorial-eligible route without
+  // finishing the lesson, clear the overlay so the step popup doesn't
+  // linger on unrelated pages.
+  useEffect(() => {
+    if (!active) return;
+    const path = location.pathname;
+    const onLab = path === "/app/lab";
+    // Workspace lesson legitimately walks the learner to Profile → Import.
+    const onWorkspaceProfile = path === "/app/profile" && lessonId === "workspace";
+    if (!onLab && !onWorkspaceProfile) {
+      reset();
+    }
+  }, [active, lessonId, location.pathname, reset]);
+
+  return <TutorialOverlay suppressed={suppressed} onFinish={onFinish ?? undefined} />;
 }

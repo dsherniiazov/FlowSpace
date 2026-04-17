@@ -29,7 +29,7 @@ services:
       - db
     volumes:
       - .:/app
-      - ${FILES_HOST_DIR:-./.docker-data/files}:${FILES_DIR:-/data/files}
+      - ${FILES_HOST_DIR:-flowspace_files_data}:${FILES_DIR:-/data/files}
 
   frontend:
     build:
@@ -39,6 +39,8 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      API_TARGET: http://api:8000
     ports:
       - "5173:5173"
     depends_on:
@@ -65,3 +67,4 @@ services:
 
 volumes:
   postgres_data:
+  flowspace_files_data:

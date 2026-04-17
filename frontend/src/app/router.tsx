@@ -3,6 +3,7 @@ import { AppLayout } from "../layouts/AppLayout";
 import { ControlPage } from "../pages/ControlPage";
 import { ControlLessonsPage } from "../pages/ControlLessonsPage";
 import { ControlUsersPage } from "../pages/ControlUsersPage";
+import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { PendingReviewPage } from "../pages/PendingReviewPage";
 import { LandingPage } from "../pages/LandingPage";
 import { LabPage } from "../pages/lab";
@@ -12,6 +13,7 @@ import { LoginPage } from "../pages/LoginPage";
 import { OAuthCallbackPage } from "../pages/OAuthCallbackPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
+import { ResetPasswordPage } from "../pages/ResetPasswordPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { TaskExecutionPage } from "../pages/TaskExecutionPage";
 import { useAuthStore } from "../store/authStore";
@@ -32,6 +34,8 @@ export const appRouter = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
   { path: "/auth/login", element: <LoginPage /> },
   { path: "/auth/register", element: <RegisterPage /> },
+  { path: "/auth/forgot-password", element: <ForgotPasswordPage /> },
+  { path: "/auth/reset-password", element: <ResetPasswordPage /> },
   { path: "/auth/oauth/callback", element: <OAuthCallbackPage /> },
   {
     path: "/app",

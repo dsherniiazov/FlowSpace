@@ -16,3 +16,12 @@ class TokenResponse(BaseModel):
 class OAuthProvidersResponse(BaseModel):
     google: bool
     github: bool
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

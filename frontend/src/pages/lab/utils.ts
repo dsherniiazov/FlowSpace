@@ -1,6 +1,8 @@
 import { Edge, Node } from "reactflow";
 import { getLabColorTokens } from "../../store/uiPreferencesStore";
-import { ControlOp, SourceHandleId, TargetHandleId } from "./types";
+import { ConnectedFlowOption, ControlOp, SourceHandleId, TargetHandleId } from "./types";
+
+export type { ConnectedFlowOption } from "./types";
 
 export function isVariableNode(node: Node | undefined): boolean {
   if (!node) return false;
@@ -316,12 +318,6 @@ export function proposeReinforcingLoopPositions(
   );
   return { multiplier, growthLimit, marker };
 }
-
-export type ConnectedFlowOption = {
-  id: string;
-  label: string;
-  direction: "inflow" | "outflow";
-};
 
 export function collectConnectedFlows(
   stockId: string,

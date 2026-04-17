@@ -61,35 +61,6 @@ export type RunStep = {
   values: Record<string, number>;
 };
 
-export type RunDetail = {
-  id: number;
-  user_id: number;
-  model_id: number | null;
-  model_snapshot: Record<string, unknown>;
-  dt: number;
-  steps: number;
-  engine_version: string;
-  seed: number | null;
-  status: string;
-  duration_ms: number | null;
-  error_message: string | null;
-  created_at: string;
-};
-
-export type RunCreatePayload = {
-  model_id?: number;
-  graph_json?: Record<string, unknown>;
-  dt: number;
-  steps: number;
-  engine_version: string;
-  seed?: number;
-};
-
-export type CompletedLesson = {
-  lesson_id: number;
-  completed_at: string;
-};
-
 export type ProgressSummary = {
   user_id: number;
   total_tasks: number;
@@ -112,4 +83,18 @@ export type LessonTask = {
 export type CompletedTask = {
   task_id: number;
   completed_at: string;
+};
+
+export type InboxNotification = {
+  id: number;
+  recipient_user_id: number;
+  sender_user_id: number | null;
+  sender_name: string | null;
+  system_id: number | null;
+  system_title: string | null;
+  kind: string;
+  title: string;
+  body: string | null;
+  created_at: string;
+  read_at: string | null;
 };

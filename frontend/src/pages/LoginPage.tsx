@@ -43,7 +43,7 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <div className="auth-page min-h-screen px-4 py-10">
+    <div className="auth-page page-enter min-h-screen px-4 py-10">
       <AuthCard title="Login" submitLabel="Sign in" mode="login" busy={busy} error={error} onSubmit={submit} />
       <div className="mx-auto mt-4 max-w-md space-y-2">
         {oauthProviders.google ? (
@@ -53,6 +53,7 @@ export function LoginPage(): JSX.Element {
           <a className="btn-secondary w-full" href={`${API_BASE_URL}/auth/oauth/github/login?redirect_to=${encodeURIComponent(`${window.location.origin}/auth/oauth/callback`)}`}>Continue with GitHub</a>
         ) : null}
         <p className="text-center text-sm text-zinc-500">No account? <Link to="/auth/register" className="auth-inline-link">Register</Link></p>
+        <p className="text-center text-sm text-zinc-500"><Link to="/auth/forgot-password" className="auth-inline-link">Forgot password?</Link></p>
       </div>
     </div>
   );

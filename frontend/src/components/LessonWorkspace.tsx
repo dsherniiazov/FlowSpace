@@ -19,6 +19,7 @@ type Props = {
 };
 
 const UNASSIGNED_SECTION_ID = -1;
+const UNASSIGNED_SECTION_STUB: Section = { id: UNASSIGNED_SECTION_ID, title: "Without section", color: "#64748b" };
 
 export function LessonWorkspace({ layoutContext, initialLessonId = null, fullPage = false }: Props): JSX.Element {
   const { setLessonHeader } = layoutContext;
@@ -83,14 +84,15 @@ export function LessonWorkspace({ layoutContext, initialLessonId = null, fullPag
     [completedTasksQuery.data],
   );
 
-  const visibleSections = useMemo(
-    () => sections.filter((section) => (lessonsBySection.get(section.id) ?? []).length > 0),
-    [sections, lessonsBySection],
-  );
+  const visibleSections = useMemo(() => {
+    const withSection = sections.filter((section) => (lessonsBySection.get(section.id) ?? []).length > 0);
+    const hasUnassigned = (lessonsBySection.get(UNASSIGNED_SECTION_ID) ?? []).length > 0;
+    return hasUnassigned ? [...withSection, UNASSIGNED_SECTION_STUB] : withSection;
+  }, [sections, lessonsBySection]);
 
   const selectedLesson = lessons.find((lesson) => lesson.id === selectedLessonId) ?? lessons[0] ?? null;
-  const selectedSection = selectedLesson?.section_id
-    ? visibleSections.find((section) => section.id === selectedLesson.section_id) ?? null
+  const selectedSection = selectedLesson
+    ? visibleSections.find((section) => section.id === (selectedLesson.section_id ?? UNASSIGNED_SECTION_ID)) ?? null
     : null;
 
   const lessonCompletedMap = useMemo(() => {

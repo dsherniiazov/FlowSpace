@@ -1,31 +1,51 @@
-"""Seed the database with the mandatory 'Intro' section, lessons, and tasks."""
+"""Seed the database with the mandatory 'Intro' section, lessons, and tasks,
+plus all systems-thinking lessons drawn from Donella Meadows' framework."""
 
 from sqlalchemy.orm import Session
 
 from backend.db import SessionLocal
-from backend.models.sections import Section
-from backend.models.lessons import Lesson
 from backend.models.lesson_tasks import LessonTask
+from backend.models.lessons import Lesson
+from backend.models.sections import Section
 from backend.models.systems import SystemModel
+from backend.seed_systems_thinking import seed_systems_thinking
 
 INTRO_SECTION_TITLE = "Intro"
 INTRO_SECTION_COLOR = "#22c55e"
 
 DEFAULT_TASK_GRAPH = {"nodes": [], "edges": []}
 
+# NOTE: the frontend `loadGraphJson` (see `store/labStore.ts`) reads node fields
+# from the top level of each node object — `kind`, `x`, `y`, `label`, `quantity`,
+# `bottleneck`, `unit`, etc. — not from a nested `data: {...}` block. If we seed
+# in the React Flow shape (`type` + `position` + `data: {...}`), everything
+# renders as a default stockNode with quantity 0 / bottleneck 0. So the task
+# template below must use the same flat layout as `toGraphJson` produces.
 SIMULATION_TEMPLATE_GRAPH = {
     "nodes": [
         {
             "id": "flow_1",
-            "type": "flowNode",
-            "position": {"x": 250, "y": 180},
-            "data": {"label": "Flow 1", "bottleneck": 10, "unit": ""},
+            "kind": "flowNode",
+            "x": 250,
+            "y": 180,
+            "label": "Flow 1",
+            # Non-zero defaults so the simulation chart has something obvious to
+            # display without the learner having to type values first.
+            "initial": 10,
+            "quantity": 10,
+            "bottleneck": 10,
+            "unit": "units",
         },
         {
             "id": "stock_2",
-            "type": "stockNode",
-            "position": {"x": 560, "y": 250},
-            "data": {"label": "Stock B", "quantity": 50, "unit": ""},
+            "kind": "stockNode",
+            "x": 560,
+            "y": 250,
+            "label": "Stock B",
+            "initial": 100,
+            "quantity": 100,
+            "bottleneck": 0,
+            "unit": "units",
         },
     ],
     "edges": [
@@ -33,8 +53,8 @@ SIMULATION_TEMPLATE_GRAPH = {
             "id": "edge_2",
             "source": "flow_1",
             "target": "stock_2",
-            "label": "+",
-            "data": {"kind": "inflow", "weight": 1},
+            "kind": "inflow",
+            "weight": 1,
         },
     ],
 }
@@ -150,16 +170,29 @@ def _ensure_lesson(db: Session, section: Section, spec: dict) -> None:
         db.add(task)
         db.flush()
     else:
-        # Update template graph if changed
+        # For intro tutorials we always keep the template + existing user copies
+        # in sync with the seed values so the learner never sees stale defaults
+        # (e.g. older 0/0 stock/flow values). Tutorial tasks are designed to be
+        # restarted anyway, so overwriting per-user edits here is acceptable.
         template = db.query(SystemModel).filter(SystemModel.id == task.system_id).first()
-        if template and template.graph_json != spec["task_graph"]:
-            template.graph_json = spec["task_graph"]
+        if template:
+            if template.graph_json != spec["task_graph"]:
+                template.graph_json = spec["task_graph"]
+            user_copies = (
+                db.query(SystemModel)
+                .filter(SystemModel.source_system_id == template.id)
+                .all()
+            )
+            for copy in user_copies:
+                if copy.graph_json != spec["task_graph"]:
+                    copy.graph_json = spec["task_graph"]
 
 
 def run_seed() -> None:
     db = SessionLocal()
     try:
         seed_intro(db)
+        seed_systems_thinking(db)
     finally:
         db.close()
 

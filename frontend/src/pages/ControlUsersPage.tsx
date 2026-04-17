@@ -39,7 +39,7 @@ export function ControlUsersPage(): JSX.Element {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="control-user-copy text-xs">{isSelf ? "you" : user.is_admin ? "admin" : "user"}</span>
+                <span className="control-user-copy text-xs">{isSelf ? "you" : user.is_admin ? "teacher" : "student"}</span>
                 {!isSelf ? (
                   <>
                     <button
@@ -47,7 +47,7 @@ export function ControlUsersPage(): JSX.Element {
                       disabled={adminMutation.isPending}
                       onClick={() => adminMutation.mutate({ userId: user.id, isAdmin: !user.is_admin })}
                     >
-                      {user.is_admin ? "Remove admin" : "Make admin"}
+                      {user.is_admin ? "Remove teacher" : "Make teacher"}
                     </button>
                     <button
                       className="btn-secondary"

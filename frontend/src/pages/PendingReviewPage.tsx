@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { MarkReviewedModal } from "../components/MarkReviewedModal";
 import { fetchPendingReviewSystems, markSystemReviewed } from "../features/systems/api";
 import { useLabStore } from "../store/labStore";
 
@@ -15,11 +17,14 @@ export function PendingReviewPage(): JSX.Element {
   });
 
   const markReviewedMutation = useMutation({
-    mutationFn: (systemId: number) => markSystemReviewed(systemId),
+    mutationFn: ({ systemId, comment }: { systemId: number; comment: string }) =>
+      markSystemReviewed(systemId, comment),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pending-review-systems"] });
     },
   });
+
+  const [reviewTarget, setReviewTarget] = useState<{ id: number; title: string } | null>(null);
 
   const systems = pendingQuery.data ?? [];
 
@@ -60,6 +65,7 @@ export function PendingReviewPage(): JSX.Element {
                         systemId: system.id,
                         systemTitle: system.title,
                         systemGraph: system.graph_json,
+                        reviewing: true,
                       },
                     });
                   }}
@@ -69,15 +75,27 @@ export function PendingReviewPage(): JSX.Element {
                 <button
                   className="btn-primary"
                   disabled={markReviewedMutation.isPending}
-                  onClick={() => markReviewedMutation.mutate(system.id)}
+                  onClick={() => setReviewTarget({ id: system.id, title: system.title })}
                 >
-                  {markReviewedMutation.isPending ? "Saving..." : "Mark as Reviewed"}
+                  Mark as reviewed
                 </button>
               </div>
             </div>
           </div>
         ))}
       </div>
+
+      <MarkReviewedModal
+        isOpen={reviewTarget !== null}
+        systemTitle={reviewTarget?.title ?? ""}
+        isSubmitting={markReviewedMutation.isPending}
+        onClose={() => setReviewTarget(null)}
+        onSubmit={async (comment) => {
+          if (!reviewTarget) return;
+          await markReviewedMutation.mutateAsync({ systemId: reviewTarget.id, comment });
+          setReviewTarget(null);
+        }}
+      />
     </div>
   );
 }

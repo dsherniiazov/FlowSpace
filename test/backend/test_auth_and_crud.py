@@ -1,5 +1,4 @@
 from fastapi import status
-from math import isclose
 
 
 def register_user(client, email="user@example.com", password="secret123"):
@@ -392,67 +391,3 @@ def test_progress_summary(client):
     completed = client.get("/progress/completed", headers=headers)
     assert completed.status_code == status.HTTP_200_OK
     assert any(item["lesson_id"] == lesson_id for item in completed.json())
-
-
-def test_runs_auto_simulation_euler(client):
-    user = register_user(client, email="sim-euler@example.com")
-    token = login_user(client, email="sim-euler@example.com")
-    headers = auth_headers(token)
-
-    create = client.post(
-        "/runs",
-        json={
-            "graph_json": {
-                "nodes": [{"id": "x", "initial": 1.0, "decay": 1.0, "bias": 0.0}],
-                "edges": [],
-            },
-            "dt": 0.1,
-            "steps": 3,
-            "engine_version": "euler_v1",
-        },
-        headers=headers,
-    )
-    assert create.status_code == status.HTTP_200_OK
-    assert create.json()["status"] == "completed"
-
-    run_id = create.json()["id"]
-    list_steps = client.get(f"/runs/{run_id}/steps", headers=headers)
-    assert list_steps.status_code == status.HTTP_200_OK
-    steps = list_steps.json()
-    assert len(steps) == 3
-
-    assert isclose(steps[0]["values"]["x"], 1.0, rel_tol=0.0, abs_tol=1e-12)
-    assert isclose(steps[1]["values"]["x"], 0.9, rel_tol=0.0, abs_tol=1e-12)
-    assert isclose(steps[2]["values"]["x"], 0.81, rel_tol=0.0, abs_tol=1e-12)
-
-
-def test_runs_auto_simulation_rk4(client):
-    user = register_user(client, email="sim-rk4@example.com")
-    token = login_user(client, email="sim-rk4@example.com")
-    headers = auth_headers(token)
-
-    create = client.post(
-        "/runs",
-        json={
-            "graph_json": {
-                "nodes": [{"id": "x", "initial": 1.0, "decay": 1.0, "bias": 0.0}],
-                "edges": [],
-            },
-            "dt": 0.1,
-            "steps": 3,
-            "engine_version": "rk4_v1",
-        },
-        headers=headers,
-    )
-    assert create.status_code == status.HTTP_200_OK
-    assert create.json()["status"] == "completed"
-
-    run_id = create.json()["id"]
-    list_steps = client.get(f"/runs/{run_id}/steps", headers=headers)
-    assert list_steps.status_code == status.HTTP_200_OK
-    steps = list_steps.json()
-    assert len(steps) == 3
-
-    assert isclose(steps[0]["values"]["x"], 1.0, rel_tol=0.0, abs_tol=1e-12)
-    assert isclose(steps[1]["values"]["x"], 0.9048375, rel_tol=0.0, abs_tol=1e-7)
-    assert isclose(steps[2]["values"]["x"], 0.8187309014, rel_tol=0.0, abs_tol=1e-7)

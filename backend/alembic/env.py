@@ -36,6 +36,7 @@ from backend.models import (
     UserProgress,
     SimulationRun,
     SimulationRunStep,
+    Notification,
 )
 
 target_metadata = Base.metadata

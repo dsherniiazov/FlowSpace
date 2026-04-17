@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import ReactFlow, { Background, BackgroundVariant, Edge, MarkerType, Node, ReactFlowInstance } from "reactflow";
+import ReactFlow, { Background, BackgroundVariant, Edge, Node, ReactFlowInstance } from "reactflow";
 import { useLocation, useNavigate } from "react-router-dom";
 import "reactflow/dist/style.css";
 
@@ -16,13 +16,16 @@ import { StockNode } from "../../components/StockNode";
 import { VariableNode } from "../../components/VariableNode";
 import { SimulationChart } from "../../components/SimulationChart";
 import { AnimatedParticleEdge } from "../../components/AnimatedParticleEdge";
-import { TutorialOverlay } from "../../components/TutorialOverlay";
+import { fetchLessons } from "../../features/lessons/api";
 import { fetchLessonTasks } from "../../features/lessonTasks/api";
-import { createSystem, fetchSystems, markSystemChangesSeen, submitSystemForReview, updateSystem } from "../../features/systems/api";
+import { fetchSections } from "../../features/sections/api";
+import { createSystem, fetchSystems, markSystemChangesSeen, markSystemReviewed, submitSystemForReview, updateSystem } from "../../features/systems/api";
+import { MarkReviewedModal } from "../../components/MarkReviewedModal";
+import { LabHelpModal } from "../../components/LabHelpModal";
 import { completeTask, fetchCompletedTasks } from "../../features/taskProgress/api";
-import { LessonTask, RunStep, SystemModel } from "../../types/api";
+import { LessonTask, SystemModel } from "../../types/api";
 import { useAuthStore } from "../../store/authStore";
-import { BalancingFeedbackLoop, FeedbackLoop, ReinforcingFeedbackLoop, useLabStore } from "../../store/labStore";
+import { FeedbackLoop, isValidLabConnection, useLabStore } from "../../store/labStore";
 import { matchesShortcutEvent, useShortcutStore } from "../../store/shortcutStore";
 import { getLabColorTokens, resolveStockColor, useUiPreferencesStore } from "../../store/uiPreferencesStore";
 import { useTutorialStore } from "../../store/tutorialStore";
@@ -33,14 +36,7 @@ import {
   buildSaveSignature,
   cloneEdges,
   cloneNodes,
-  closestSourceHandle,
-  closestTargetHandle,
   collectConnectedFlows,
-  controlEdgeColor,
-  edgeKind,
-  feedbackLoopHandlePolicy,
-  formatDisplayNumber,
-  getNodeCenter,
   isConstantNode,
   isFlowNode,
   isStockNode,
@@ -52,15 +48,17 @@ import {
   proposeReinforcingLoopPositions,
   sameIdList,
 } from "./utils";
-import { simulateTimeline } from "./simulation";
 import { HelpTip } from "./HelpTip";
-import { LockToggleIcon } from "./LockToggleIcon";
+import { CanvasToolbar } from "./components/CanvasToolbar";
+import { CommentEntryOverlay } from "./components/CommentEntryOverlay";
+import { LabContextMenu } from "./components/LabContextMenu";
+import { exportGraphAsJson } from "./exportGraph";
+import { useLabDisplay } from "./hooks/useLabDisplay";
+import { useSimulationRunner } from "./hooks/useSimulationRunner";
 
 const DEFAULT_ZOOM = 0.6;
 const MIN_ZOOM = 0.06;
 const MAX_ZOOM = 3.0;
-const MAX_ANIMATION_MS = 30_000;
-const TARGET_FPS = 30;
 
 export function LabPage(): JSX.Element {
   const queryClient = useQueryClient();
@@ -73,7 +71,6 @@ export function LabPage(): JSX.Element {
   const [title, setTitle] = useState("My dynamic system");
   const [zoomPercent, setZoomPercent] = useState(100);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [isChartModalOpen, setIsChartModalOpen] = useState(false);
   const [isConfirmNewSystemOpen, setIsConfirmNewSystemOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -92,15 +89,17 @@ export function LabPage(): JSX.Element {
   const [contextMenu, setContextMenu] = useState<{ screenX: number; screenY: number; flowX: number; flowY: number } | null>(null);
   const [addCommentNodeId, setAddCommentNodeId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Flag set when a teacher reaches this page via "Open in Lab" on the
+  // Pending Review list. Kept in state so that a later internal navigation
+  // that doesn't re-pass location.state still shows the review button.
+  const [isReviewingAsTeacher, setIsReviewingAsTeacher] = useState(false);
   const [isLightTheme, setIsLightTheme] = useState<boolean>(() => {
     if (typeof document === "undefined") return false;
     return document.documentElement.dataset.theme === "light";
   });
-  const animationRef = useRef<number | null>(null);
   const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
-  const historyRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
-  const skipHistoryPushRef = useRef(false);
-  const lastHistorySigRef = useRef("");
   const loadedSystemGraphIdRef = useRef<number | null>(null);
   const userId = useAuthStore((state) => state.userId);
   const isAdmin = useAuthStore((state) => state.isAdmin);
@@ -140,12 +139,15 @@ export function LabPage(): JSX.Element {
     selectedNodeId, selectedEdgeId, activeSystemId, lockEditing,
     setSteps, setDt, setAlgorithm, setSliderIndex, setLockEditing,
     onNodesChange, onEdgesChange, onConnect, setSelectedNodeId, setSelectedEdgeId,
-    setActiveSystemId, updateSelectedNode, updateSelectedEdge,
+    setActiveSystemId, updateSelectedNode, updateSelectedEdge, setSelectedNodeControlOp,
     addStock, addFlow, addConstant, addVariable, addNodeAtPosition,
     toGraphJson, clearSimulation, setSimulationSteps, replaceGraph, resetToInitialGraph,
     loadGraphJson, createBalancingFeedbackLoop, createReinforcingFeedbackLoop,
     updateBalancingFeedbackLoop, deleteBalancingFeedbackLoop,
+    undo, redo,
   } = useLabStore();
+  const canUndo = useLabStore((s) => s.past.length > 0);
+  const canRedo = useLabStore((s) => s.future.length > 0);
 
   // --- Derived state ---
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
@@ -168,6 +170,42 @@ export function LabPage(): JSX.Element {
     const op = String(selectedEdge.data?.op ?? "add");
     return CONTROL_OPS.some((item) => item.value === op) ? (op as ControlOp) : "add";
   }, [selectedEdge, selectedEdgeIsControl]);
+
+  const selectedNodeIsControlSource = useMemo(
+    () => selectedNode != null && (isConstantNode(selectedNode) || isVariableNode(selectedNode)),
+    [selectedNode],
+  );
+
+  const selectedNodeOp: ControlOp = useMemo(() => {
+    if (!selectedNodeIsControlSource || !selectedNode) return "add";
+    const raw = String(selectedNode.data?.op ?? "add");
+    return CONTROL_OPS.some((item) => item.value === raw) ? (raw as ControlOp) : "add";
+  }, [selectedNode, selectedNodeIsControlSource]);
+
+  // When a node that belongs to a feedback loop is selected, the right-side
+  // editor replaces the generic Constant/Variable/Stock fields with a
+  // loop-specific card. We derive the parent loop + a human-readable role
+  // label up-front so the render can stay simple.
+  const selectedNodeLoop = useMemo(() => {
+    if (!selectedNode) return null;
+    const loopId = selectedNode.data?.loopId;
+    if (!loopId) return null;
+    return feedbackLoops.find((loop) => loop.id === loopId) ?? null;
+  }, [selectedNode, feedbackLoops]);
+
+  const selectedNodeLoopRoleLabel = useMemo(() => {
+    if (!selectedNode || !selectedNodeLoop) return null;
+    const role = String(selectedNode.data?.loopRole ?? "");
+    switch (role) {
+      case "goal": return "Goal";
+      case "discrepancy": return "Discrepancy";
+      case "correctiveAction": return "Corrective Action";
+      case "reinforcingMultiplier": return "Multiplier";
+      case "growthLimit": return "Growth limit";
+      case "reinforcingMarker": return "Loop marker";
+      default: return null;
+    }
+  }, [selectedNode, selectedNodeLoop]);
 
   const nodeTypes = useMemo(() => ({
     flowNode: FlowNode, stockNode: StockNode,
@@ -214,6 +252,16 @@ export function LabPage(): JSX.Element {
     const idx = lessonTasks.findIndex((task) => task.id === lessonTaskContext.taskId);
     if (idx < 0) return null;
     return lessonTasks[idx + 1] ?? null;
+  }, [lessonTaskContext, lessonTasks]);
+  const prevLessonTask = useMemo(() => {
+    if (!lessonTaskContext) return null;
+    const idx = lessonTasks.findIndex((task) => task.id === lessonTaskContext.taskId);
+    if (idx <= 0) return null;
+    return lessonTasks[idx - 1] ?? null;
+  }, [lessonTaskContext, lessonTasks]);
+  const currentLessonTaskIndex = useMemo(() => {
+    if (!lessonTaskContext) return -1;
+    return lessonTasks.findIndex((task) => task.id === lessonTaskContext.taskId);
   }, [lessonTaskContext, lessonTasks]);
   const canResolveLessonNavigation = lessonTaskContext !== null && !lessonTasksQuery.isLoading && !lessonTasksQuery.isError;
 
@@ -267,6 +315,17 @@ export function LabPage(): JSX.Element {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["systems", userId] }); },
   });
 
+  const markReviewedMutation = useMutation({
+    mutationFn: async (payload: { systemId: number; comment: string }) =>
+      markSystemReviewed(payload.systemId, payload.comment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pending-review-systems"] });
+      setIsReviewModalOpen(false);
+      setIsReviewingAsTeacher(false);
+      navigate("/app/pending-review");
+    },
+  });
+
   const markSeenMutation = useMutation({
     mutationFn: async (systemId: number) => markSystemChangesSeen(systemId),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["systems", userId] }); },
@@ -274,13 +333,56 @@ export function LabPage(): JSX.Element {
 
   const saveButtonDisabled = saveMutation.isPending || saveDisabledNoChanges;
 
-  // --- Effects ---
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+
+  const { isPlaying, runLocalSimulation, stopAnimation } = useSimulationRunner({
+    nodes,
+    edges,
+    nodesById,
+    feedbackLoops,
+    steps,
+    dt,
+    simulationSteps,
+    sliderIndex,
+    setSimulationSteps,
+    setSliderIndex,
+    setLockEditing,
+  });
+
+  // Expose the "mark task completed" handler and modal-suppress flag to the
+  // globally-mounted TutorialOverlay (in AppLayout). This keeps the overlay
+  // alive across page navigations (e.g. Lab → Profile → Lab) while still
+  // letting Lab-specific logic drive task completion and modal suppression.
   useEffect(() => {
-    return () => { if (animationRef.current !== null) cancelAnimationFrame(animationRef.current); };
-  }, []);
+    useTutorialStore.getState().setOnFinishCallback(() => {
+      if (!lessonTaskContext || isCurrentTaskCompleted || completeTaskMutation.isPending) return;
+      completeTaskMutation.mutate(lessonTaskContext.taskId);
+    });
+    return () => useTutorialStore.getState().setOnFinishCallback(null);
+  }, [lessonTaskContext, isCurrentTaskCompleted, completeTaskMutation]);
 
   useEffect(() => {
-    const state = (location.state ?? {}) as LabNavigationState;
+    useTutorialStore.getState().setOverlaySuppressed(isTaskModalOpen);
+    return () => useTutorialStore.getState().setOverlaySuppressed(false);
+  }, [isTaskModalOpen]);
+
+  useEffect(() => {
+    let state = (location.state ?? {}) as LabNavigationState;
+    // When the user navigates away mid-tutorial (e.g. to Profile → Import →
+    // Open in Lab) and comes back to /app/lab, the incoming location.state
+    // will carry the *system* the user chose but no `taskContext`. In that
+    // case we merge the cached task context so the lesson can continue to
+    // its "Finish lesson" step. If there's no navigation state at all, we
+    // also rehydrate the task context (so a plain sidebar link returns the
+    // user to the running lesson).
+    const tutorialState = useTutorialStore.getState();
+    if (tutorialState.active && tutorialState.cachedLabState && !state.taskContext) {
+      const cached = tutorialState.cachedLabState as LabNavigationState;
+      if (cached.taskContext) state = { ...state, taskContext: cached.taskContext };
+    }
+    if (state.taskContext) {
+      useTutorialStore.getState().setCachedLabState(state);
+    }
     if (typeof state.systemId === "number") {
       setActiveSystemId(state.systemId);
       if (state.systemGraph && typeof state.systemGraph === "object") {
@@ -313,6 +415,7 @@ export function LabPage(): JSX.Element {
       setIsTaskModalOpen(false);
     }
     if (typeof state.systemTitle === "string" && state.systemTitle.trim()) setTitle(state.systemTitle);
+    if (state.reviewing === true) setIsReviewingAsTeacher(true);
   }, [location.state, loadGraphJson, setActiveSystemId]);
 
   useEffect(() => {
@@ -322,8 +425,6 @@ export function LabPage(): JSX.Element {
     if (current?.has_unseen_changes) markSeenMutation.mutate(activeSystemId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSystemId, systemsQuery.data]);
-
-  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
   // --- Feedback loop derived state ---
   const editingFeedbackLoop = useMemo<FeedbackLoop | null>(
@@ -341,14 +442,19 @@ export function LabPage(): JSX.Element {
     return collectConnectedFlows(activeFeedbackLoopStockNode.id, nodesById, edges);
   }, [activeFeedbackLoopStockNode, nodesById, edges]);
   const feedbackLoopList = useMemo(
-    () => feedbackLoops.map((loop) => ({
-      ...loop,
-      stockLabel: String(nodesById.get(loop.stockId)?.data?.label ?? loop.stockId),
-      flowLabel: String(nodesById.get(loop.controlledFlowId)?.data?.label ?? loop.controlledFlowId),
-      loopLabel: loop.type === "balancing"
+    () => feedbackLoops.map((loop) => {
+      const fallbackLabel = loop.type === "balancing"
         ? String(nodesById.get(loop.correctiveNodeId)?.data?.label ?? "Corrective Action")
-        : String(nodesById.get(loop.multiplierNodeId)?.data?.label ?? "Multiplier"),
-    })),
+        : String(nodesById.get(loop.multiplierNodeId)?.data?.label ?? "Multiplier");
+      return {
+        ...loop,
+        stockLabel: String(nodesById.get(loop.stockId)?.data?.label ?? loop.stockId),
+        flowLabel: String(nodesById.get(loop.controlledFlowId)?.data?.label ?? loop.controlledFlowId),
+        // Prefer the user-provided loop name; fall back to the corrective /
+        // multiplier node label so older loops without a name still read well.
+        loopLabel: (loop.name ?? "").trim() || fallbackLabel,
+      };
+    }),
     [feedbackLoops, nodesById],
   );
   const feedbackLoopModalInitialTab = useMemo<"balancing" | "reinforcing" | undefined>(
@@ -365,6 +471,7 @@ export function LabPage(): JSX.Element {
       operation: editingFeedbackLoop.operation,
       delayEnabled: editingFeedbackLoop.delayEnabled,
       delaySteps: editingFeedbackLoop.delaySteps,
+      name: editingFeedbackLoop.name ?? "",
       correctiveLabel: String(nodesById.get(editingFeedbackLoop.correctiveNodeId)?.data?.label ?? "Corrective Action"),
     };
   }, [editingFeedbackLoop, nodesById]);
@@ -380,6 +487,7 @@ export function LabPage(): JSX.Element {
         ? asNumber(nodesById.get(editingFeedbackLoop.growthLimitNodeId)?.data?.quantity, 0)
         : undefined,
       clampNonNegative: editingFeedbackLoop.clampNonNegative,
+      name: editingFeedbackLoop.name ?? "",
       multiplierLabel: (() => {
         const raw = String(nodesById.get(editingFeedbackLoop.multiplierNodeId)?.data?.label ?? "Multiplier");
         return raw === "(R)" ? "Multiplier" : raw;
@@ -453,192 +561,10 @@ export function LabPage(): JSX.Element {
     if (currentSystem.title) setTitle(currentSystem.title);
   }, [activeSystemId, systemsQuery.data, loadGraphJson]);
 
-  // --- Displayed nodes/edges with live values ---
-  const displayedNodes: Node[] = useMemo(() => {
-    const displayPrecision = algorithm === "rk4_v2" ? 8 : 3;
-    const balancingLoops = feedbackLoops.filter((loop): loop is BalancingFeedbackLoop => loop.type === "balancing");
-    const reinforcingLoops = feedbackLoops.filter((loop): loop is ReinforcingFeedbackLoop => loop.type === "reinforcing");
-    const loopByDiscrepancyId = new Map(balancingLoops.map((loop) => [loop.discrepancyNodeId, loop] as const));
-    const loopByMultiplierId = new Map(reinforcingLoops.map((loop) => [loop.multiplierNodeId, loop] as const));
-    const reinforcingLoopById = new Map(reinforcingLoops.map((loop) => [loop.id, loop] as const));
-
-    return nodes.map((node) => {
-      const isReinforcingMarkerNode = String(node.data?.loopRole ?? "") === "reinforcingMarker";
-      if (isReinforcingMarkerNode) {
-        const loopId = String(node.data?.loopId ?? "");
-        const loop = reinforcingLoopById.get(loopId);
-        if (!loop) return node;
-        const stockNode = nodesById.get(loop.stockId);
-        const multiplierNode = nodesById.get(loop.multiplierNodeId);
-        const flowNode = nodesById.get(loop.controlledFlowId);
-        if (!stockNode || !multiplierNode || !flowNode) return node;
-        const stockCenter = getNodeCenter(stockNode);
-        const multiplierCenter = getNodeCenter(multiplierNode);
-        const flowCenter = getNodeCenter(flowNode);
-        const markerWidth = 28;
-        const markerHeight = 20;
-        const centerX = (stockCenter.x + multiplierCenter.x + flowCenter.x) / 3;
-        const centerY = (stockCenter.y + multiplierCenter.y + flowCenter.y) / 3;
-        return {
-          ...node,
-          position: { x: centerX - markerWidth / 2, y: centerY - markerHeight / 2 },
-          data: { ...node.data, quantity: "", displayQuantity: "", label: String(node.data?.label ?? "(R)") },
-        };
-      }
-
-      const liveValue = currentSnapshot?.values[node.id];
-      const quantity = liveValue !== undefined && !isFlowNode(node) ? liveValue : node.data?.quantity;
-      const bottleneck = liveValue !== undefined && isFlowNode(node) ? liveValue : node.data?.bottleneck;
-      const discrepancyLoop = loopByDiscrepancyId.get(node.id);
-      const stockNode = discrepancyLoop ? nodesById.get(discrepancyLoop.stockId) : undefined;
-      const correctiveNode = discrepancyLoop ? nodesById.get(discrepancyLoop.correctiveNodeId) : undefined;
-      const flowNode = discrepancyLoop ? nodesById.get(discrepancyLoop.controlledFlowId) : undefined;
-      const discrepancyCenter = discrepancyLoop ? getNodeCenter(node) : null;
-      const centroid =
-        discrepancyLoop && stockNode && correctiveNode && flowNode && discrepancyCenter
-          ? (() => {
-              const points = [getNodeCenter(stockNode), getNodeCenter(correctiveNode), getNodeCenter(flowNode), discrepancyCenter];
-              return { x: points.reduce((sum, p) => sum + p.x, 0) / points.length, y: points.reduce((sum, p) => sum + p.y, 0) / points.length };
-            })()
-          : null;
-      const balancingBadgeOffsetX = centroid && discrepancyCenter ? Math.max(-520, Math.min(520, centroid.x - discrepancyCenter.x)) : undefined;
-      const balancingBadgeOffsetY = centroid && discrepancyCenter ? Math.max(-360, Math.min(360, centroid.y - discrepancyCenter.y)) : undefined;
-      const reinforcingLoop = loopByMultiplierId.get(node.id);
-      const reinforcingCollapsed =
-        reinforcingLoop && Math.abs(asNumber(reinforcingLoop.k, 1) - 1) <= 1e-9
-          ? String(node.data?.label ?? "") === "(R)"
-          : false;
-
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          quantity, bottleneck,
-          displayQuantity: reinforcingCollapsed ? "" : formatDisplayNumber(quantity, displayPrecision),
-          displayBottleneck: formatDisplayNumber(bottleneck, displayPrecision),
-          balancingLoopType: discrepancyLoop ? "B" : "",
-          balancingBadgeOffsetX, balancingBadgeOffsetY,
-          reinforcingCollapsed,
-          reinforcingK: reinforcingLoop?.k,
-        },
-      };
-    });
-  }, [nodes, currentSnapshot, algorithm, feedbackLoops, nodesById]);
-
-  const displayedEdges: Edge[] = useMemo(() => {
-    const baseEdges: Edge[] = edges.map((edge): Edge => {
-      const sourceNode = nodesById.get(edge.source);
-      const targetNode = nodesById.get(edge.target);
-      const handlePolicy = feedbackLoopHandlePolicy(edge, sourceNode, targetNode);
-      const sourceHandle = sourceNode && targetNode ? closestSourceHandle(sourceNode, targetNode, handlePolicy.sourceAllowed) : edge.sourceHandle;
-      const targetHandle = sourceNode && targetNode ? closestTargetHandle(sourceNode, targetNode, handlePolicy.targetAllowed) : edge.targetHandle;
-      const kind = edgeKind(edge, nodesById);
-      const labelBg = { fill: isLightTheme ? labColorTokens.labelBgLight : labColorTokens.labelBgDark };
-
-      if (kind === "inflow") {
-        return {
-          ...edge, sourceHandle, targetHandle, className: "lab-edge-inflow", label: "+",
-          style: { stroke: labColorTokens.inflow, strokeWidth: 2.2 },
-          labelStyle: { fill: labColorTokens.inflow, fontWeight: 700 }, labelBgStyle: labelBg,
-          markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.inflow },
-          data: { ...(edge.data ?? {}), kind: "inflow", weight: 1 },
-        };
-      }
-      if (kind === "outflow") {
-        return {
-          ...edge, sourceHandle, targetHandle, className: "lab-edge-outflow", label: "-",
-          style: { stroke: labColorTokens.outflow, strokeWidth: 2.2 },
-          labelStyle: { fill: labColorTokens.outflow, fontWeight: 700 }, labelBgStyle: labelBg,
-          markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.outflow },
-          data: { ...(edge.data ?? {}), kind: "outflow", weight: -1 },
-        };
-      }
-
-      const reinforcingPolarity = String(edge.data?.reinforcingPolarity ?? "");
-      if (edge.data?.feedbackLoopType === "reinforcing" && (reinforcingPolarity === "positive" || reinforcingPolarity === "negative")) {
-        const color = labColorTokens.reinforcing[reinforcingPolarity];
-        return {
-          ...edge, sourceHandle, targetHandle, className: `lab-edge-reinforcing-${reinforcingPolarity}`,
-          label: String(edge.label ?? ""),
-          style: { stroke: color, strokeWidth: 2.1 },
-          labelStyle: { fill: color, fontWeight: 700 }, labelBgStyle: labelBg,
-          markerEnd: { type: MarkerType.ArrowClosed, color },
-          data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
-        };
-      }
-
-      const isControl = (isConstantNode(sourceNode) || isVariableNode(sourceNode)) && isFlowNode(targetNode);
-      if (isControl) {
-        const opRaw = String(edge.data?.op ?? "add");
-        const op: ControlOp = CONTROL_OPS.some((item) => item.value === opRaw) ? (opRaw as ControlOp) : "add";
-        const color = controlEdgeColor(op, labColorTokens);
-        return {
-          ...edge, sourceHandle, targetHandle, className: `lab-edge-control lab-edge-control-${op}`,
-          label: opRaw ? CONTROL_OPS.find((item) => item.value === op)?.label ?? String(edge.label ?? "") : String(edge.label ?? ""),
-          style: { stroke: color, strokeWidth: 2.1 },
-          labelStyle: { fill: color, fontWeight: 700 }, labelBgStyle: labelBg,
-          markerEnd: { type: MarkerType.ArrowClosed, color },
-          data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
-        };
-      }
-
-      return {
-        ...edge, sourceHandle, targetHandle, className: "lab-edge-neutral", label: String(edge.label ?? ""),
-        style: { stroke: labColorTokens.neutral, strokeWidth: 2 },
-        labelStyle: { fill: labColorTokens.neutralLabel, fontWeight: 600 }, labelBgStyle: labelBg,
-        markerEnd: { type: MarkerType.ArrowClosed, color: labColorTokens.neutral },
-        data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
-      };
-    });
-
-    return baseEdges.map((e) => {
-      let sourceValue = 0;
-      if (isPlaying && currentSnapshot) sourceValue = Math.abs(currentSnapshot.values[e.source] ?? 0);
-      return { ...e, data: { ...(e.data ?? {}), animate: isPlaying && sourceValue > 0 } };
-    });
-  }, [edges, isLightTheme, labColorTokens, nodesById, isPlaying, currentSnapshot]);
-
-  // --- Action handlers ---
-  function playSimulation(stepsData: RunStep[]): void {
-    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
-    if (stepsData.length === 0) return;
-    const totalDurationMs = Math.min(MAX_ANIMATION_MS, Math.max(1000, stepsData.length * (1000 / TARGET_FPS)));
-    const startTs = performance.now();
-    setLockEditing(true);
-    setIsPlaying(true);
-    setSliderIndex(0);
-
-    const tick = (now: number) => {
-      const elapsed = now - startTs;
-      const progress = Math.min(1, elapsed / totalDurationMs);
-      const index = Math.min(stepsData.length - 1, Math.floor(progress * (stepsData.length - 1)));
-      setSliderIndex(index);
-      if (progress < 1) { animationRef.current = requestAnimationFrame(tick); return; }
-      setSliderIndex(stepsData.length - 1);
-      setLockEditing(false);
-      setIsPlaying(false);
-      animationRef.current = null;
-    };
-    animationRef.current = requestAnimationFrame(tick);
-  }
-
-  function runLocalSimulation(): void {
-    const startSnapshot = simulationSteps.length > 0 ? simulationSteps[Math.min(sliderIndex, simulationSteps.length - 1)] : null;
-    const startState: Record<string, number> = {};
-    for (const node of nodes) {
-      if (startSnapshot && startSnapshot.values[node.id] !== undefined) {
-        const raw = asNumber(startSnapshot.values[node.id], 0);
-        startState[node.id] = isFlowNode(node) ? Math.max(0, raw) : raw;
-      } else {
-        startState[node.id] = isFlowNode(node)
-          ? Math.max(0, asNumber(node.data?.bottleneck ?? node.data?.quantity ?? 0))
-          : asNumber(node.data?.quantity ?? node.data?.initial ?? 0);
-      }
-    }
-    const stepsData = simulateTimeline(startState, nodes, edges, nodesById, feedbackLoops, steps, dt);
-    setSimulationSteps(stepsData);
-    playSimulation(stepsData);
-  }
+  const { displayedNodes, displayedEdges } = useLabDisplay({
+    nodes, edges, nodesById, feedbackLoops,
+    currentSnapshot, algorithm, labColorTokens, isLightTheme, isPlaying,
+  });
 
   function resetZoomToDefault(): void {
     if (!rfInstance) return;
@@ -646,17 +572,8 @@ export function LabPage(): JSX.Element {
     setZoomPercent(100);
   }
 
-  function exportJson(): void {
-    const graph = toGraphJson() as Record<string, unknown>;
-    const json = JSON.stringify(graph, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const safeTitle = titleTrimmed.replace(/[^a-zA-Z0-9_-]+/g, "_") || "system";
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${safeTitle}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  async function exportJson(): Promise<void> {
+    await exportGraphAsJson(toGraphJson() as Record<string, unknown>, titleTrimmed);
   }
 
   function handleSaveSystem(): void {
@@ -701,9 +618,61 @@ export function LabPage(): JSX.Element {
     completeTaskMutation.mutate(lessonTaskContext.taskId);
   }
 
-  function handleTaskProgressNavigation(): void {
+  async function handleTaskProgressNavigation(): Promise<void> {
     if (!lessonTaskContext || !canResolveLessonNavigation) return;
     if (nextLessonTask) { navigate(`/app/tasks/${nextLessonTask.id}`); return; }
+
+    // Lesson is complete — return to the lessons index, but hint which lesson
+    // should be pre-selected: the next lesson in the current section, or if the
+    // current lesson was the last in its section, the first lesson of the next
+    // section.
+    try {
+      const [allLessons, allSections] = await Promise.all([
+        queryClient.fetchQuery({ queryKey: ["lessons"], queryFn: fetchLessons }),
+        queryClient.fetchQuery({ queryKey: ["sections"], queryFn: fetchSections }),
+      ]);
+
+      const byOrder = <T extends { order_index?: number | null }>(a: T, b: T): number =>
+        Number(a.order_index ?? Number.MAX_SAFE_INTEGER) - Number(b.order_index ?? Number.MAX_SAFE_INTEGER);
+
+      const current = (allLessons ?? []).find((l) => l.id === lessonTaskContext.lessonId) ?? null;
+      const currentSectionId = current?.section_id ?? null;
+
+      // Next lesson in the same section (strictly after the current one by order).
+      let nextLesson: { id: number } | null = null;
+      if (current) {
+        const sameSection = [...(allLessons ?? [])]
+          .filter((l) => (l.section_id ?? null) === currentSectionId)
+          .sort(byOrder);
+        const idx = sameSection.findIndex((l) => l.id === current.id);
+        if (idx >= 0 && idx + 1 < sameSection.length) {
+          nextLesson = { id: sameSection[idx + 1].id };
+        }
+      }
+
+      // If this was the last lesson in its section, pick the first lesson of the
+      // next section (by section order_index).
+      if (!nextLesson && currentSectionId !== null) {
+        const sortedSections = [...(allSections ?? [])].sort(byOrder);
+        const secIdx = sortedSections.findIndex((s) => s.id === currentSectionId);
+        for (let i = secIdx + 1; i < sortedSections.length; i += 1) {
+          const lessonsInSection = [...(allLessons ?? [])]
+            .filter((l) => (l.section_id ?? null) === sortedSections[i].id)
+            .sort(byOrder);
+          if (lessonsInSection.length > 0) {
+            nextLesson = { id: lessonsInSection[0].id };
+            break;
+          }
+        }
+      }
+
+      if (nextLesson) {
+        navigate(`/app/lessons?next=${nextLesson.id}`);
+        return;
+      }
+    } catch {
+      // fall through to the plain index if anything went wrong
+    }
     navigate("/app/lessons");
   }
 
@@ -714,8 +683,7 @@ export function LabPage(): JSX.Element {
   }
 
   function doCreateNewSystem(): void {
-    if (animationRef.current !== null) { cancelAnimationFrame(animationRef.current); animationRef.current = null; }
-    setIsPlaying(false);
+    stopAnimation();
     setLockEditing(false);
     resetToInitialGraph();
     setActiveSystemId(null);
@@ -760,7 +728,7 @@ export function LabPage(): JSX.Element {
         id: editingFeedbackLoop.id, boundaryType: payload.boundaryType, goalValue: payload.goalValue,
         adjustmentTime: payload.adjustmentTime, operation: payload.operation,
         delayEnabled: payload.delayEnabled, delaySteps: payload.delaySteps,
-        controlledFlowId: payload.controlledFlowId, correctiveLabel: payload.correctiveLabel, correctivePosition,
+        controlledFlowId: payload.controlledFlowId, name: payload.name, correctiveLabel: payload.correctiveLabel, correctivePosition,
       });
       if (result.ok) setEditingFeedbackLoopId(null);
       return result;
@@ -770,7 +738,7 @@ export function LabPage(): JSX.Element {
       stockId: activeFeedbackLoopStockNode.id, controlledFlowId: payload.controlledFlowId,
       boundaryType: payload.boundaryType, goalValue: payload.goalValue, adjustmentTime: payload.adjustmentTime,
       operation: payload.operation, delayEnabled: payload.delayEnabled, delaySteps: payload.delaySteps,
-      clampNonNegative: true, correctiveLabel: payload.correctiveLabel, positions,
+      clampNonNegative: true, name: payload.name, correctiveLabel: payload.correctiveLabel, positions,
     });
     if (result.ok) setCreateFeedbackLoopStockId(null);
     return result;
@@ -788,32 +756,15 @@ export function LabPage(): JSX.Element {
     const result = createReinforcingFeedbackLoop({
       stockId: activeFeedbackLoopStockNode.id, controlledFlowId: payload.controlledFlowId,
       k: payload.k, polarity: payload.polarity, delayEnabled: payload.delayEnabled, delaySteps: payload.delaySteps,
-      growthLimit: payload.growthLimit, clampNonNegative: payload.clampNonNegative, multiplierLabel: payload.multiplierLabel, positions,
+      growthLimit: payload.growthLimit, clampNonNegative: payload.clampNonNegative,
+      name: payload.name, multiplierLabel: payload.multiplierLabel, positions,
     });
     if (result.ok) { setCreateFeedbackLoopStockId(null); setEditingFeedbackLoopId(null); }
     return result;
   }
 
-  // --- History / clipboard ---
-  function pushHistorySnapshot(nextNodes: Node[], nextEdges: Edge[]): void {
-    const snapshot = { nodes: cloneNodes(nextNodes), edges: cloneEdges(nextEdges) };
-    const history = historyRef.current;
-    const last = history[history.length - 1];
-    const isSame = !!last && JSON.stringify(last.nodes) === JSON.stringify(snapshot.nodes) && JSON.stringify(last.edges) === JSON.stringify(snapshot.edges);
-    if (isSame) return;
-    history.push(snapshot);
-    if (history.length > 5) history.splice(0, history.length - 5);
-  }
-
-  function undoGraph(): void {
-    const history = historyRef.current;
-    if (history.length <= 1 || lockEditing) return;
-    history.pop();
-    const previous = history[history.length - 1];
-    if (!previous) return;
-    skipHistoryPushRef.current = true;
-    replaceGraph(cloneNodes(previous.nodes), cloneEdges(previous.edges));
-  }
+  // Undo / redo are now owned by the lab store (see `useLabStore`) so keyboard
+  // shortcuts, the toolbar buttons and any other triggers share the same ring.
 
   function getEffectiveSelection(): { nodeIds: string[]; edgeIds: string[] } {
     const nIds = selectedNodeIds.length ? selectedNodeIds : selectedNodeId ? [selectedNodeId] : [];
@@ -838,7 +789,6 @@ export function LabPage(): JSX.Element {
     const edgeSet = new Set(edgeIds.filter((id) => !edges.find((edge) => edge.id === id)?.data?.feedbackLoopPersistent));
     const nextNodes = nodes.filter((node) => !nodeSet.has(node.id));
     const nextEdges = edges.filter((edge) => !edgeSet.has(edge.id) && !nodeSet.has(edge.source) && !nodeSet.has(edge.target));
-    skipHistoryPushRef.current = true;
     replaceGraph(nextNodes, nextEdges);
     setSelectedNodeIds([]); setSelectedEdgeIds([]); setSelectedNodeId(null); setSelectedEdgeId(null);
   }
@@ -857,7 +807,6 @@ export function LabPage(): JSX.Element {
     if (node?.data?.feedbackLoopPersistent === true) return;
     const nextNodes = nodes.filter((n) => n.id !== nodeId);
     const nextEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-    skipHistoryPushRef.current = true;
     replaceGraph(nextNodes, nextEdges);
     setSelectedNodeId(null); setSelectedEdgeId(null); setSelectedNodeIds([]); setSelectedEdgeIds([]);
   }
@@ -887,23 +836,10 @@ export function LabPage(): JSX.Element {
         source: mappedSource, target: mappedTarget, data: { ...(edge.data ?? {}) },
       });
     }
-    skipHistoryPushRef.current = true;
     replaceGraph([...nodes, ...newNodes], [...edges, ...newEdges]);
     setSelectedNodeIds(newNodes.map((n) => n.id));
     setSelectedEdgeIds(newEdges.map((e) => e.id));
   }
-
-  // --- History tracking ---
-  useEffect(() => {
-    const sig = JSON.stringify({
-      n: nodes.map((node) => ({ id: node.id, p: node.position, d: node.data, t: node.type })),
-      e: edges.map((edge) => ({ id: edge.id, s: edge.source, t: edge.target, d: edge.data })),
-    });
-    if (sig === lastHistorySigRef.current) return;
-    lastHistorySigRef.current = sig;
-    if (skipHistoryPushRef.current) { skipHistoryPushRef.current = false; pushHistorySnapshot(nodes, edges); return; }
-    pushHistorySnapshot(nodes, edges);
-  }, [nodes, edges]);
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
@@ -913,14 +849,19 @@ export function LabPage(): JSX.Element {
       if (!isTextInput && matchesShortcutEvent(event, shortcutBindings.delete_selection)) { event.preventDefault(); deleteSelection(); return; }
       if (matchesShortcutEvent(event, shortcutBindings.save_system)) { event.preventDefault(); handleSaveSystem(); return; }
       if (isTextInput) return;
-      if (matchesShortcutEvent(event, shortcutBindings.undo_graph)) { event.preventDefault(); undoGraph(); return; }
+      if (matchesShortcutEvent(event, shortcutBindings.undo_graph)) {
+        event.preventDefault();
+        // Ctrl+Shift+Z (or ⌘⇧Z) is the widely-understood "redo" variant.
+        if (event.shiftKey) redo(); else undo();
+        return;
+      }
       if (matchesShortcutEvent(event, shortcutBindings.copy_selection)) { event.preventDefault(); copySelection(); return; }
       if (matchesShortcutEvent(event, shortcutBindings.cut_selection)) { event.preventDefault(); cutSelection(); return; }
       if (matchesShortcutEvent(event, shortcutBindings.paste_selection)) { event.preventDefault(); pasteSelection(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, cutSelection, deleteSelection, handleSaveSystem, pasteSelection, shortcutBindings, undoGraph]);
+  }, [copySelection, cutSelection, deleteSelection, handleSaveSystem, pasteSelection, shortcutBindings, undo, redo]);
 
   const handleSelectionChange = useCallback(
     ({ nodes: selectedNodes, edges: selectedEdges }: { nodes: Node[]; edges: Edge[] }) => {
@@ -928,6 +869,12 @@ export function LabPage(): JSX.Element {
       const nextEdgeIds = selectedEdges.map((edge) => edge.id).sort();
       setSelectedNodeIds((prev) => (sameIdList(prev, nextNodeIds) ? prev : nextNodeIds));
       setSelectedEdgeIds((prev) => (sameIdList(prev, nextEdgeIds) ? prev : nextEdgeIds));
+      // Emit a DOM event when the user has selected 2+ nodes so the tutorial
+      // can detect multi-selection without subscribing to LabPage state.
+      if (selectedNodes.length >= 2) {
+        const canvasEl = document.querySelector('[data-tutorial="canvas"]');
+        canvasEl?.dispatchEvent(new CustomEvent("fs-multi-selected", { bubbles: true }));
+      }
       if (selectedNodes.length === 1 && selectedEdges.length === 0) {
         const onlyId = selectedNodes[0].id;
         if (selectedNodeId !== onlyId) setSelectedNodeId(onlyId);
@@ -961,13 +908,20 @@ export function LabPage(): JSX.Element {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={(connection) => isValidLabConnection(connection, useLabStore.getState().nodes)}
             onSelectionChange={handleSelectionChange}
             onNodeClick={(_, node) => setSelectedNodeId(node.id)}
             onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
             onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setSelectedNodeIds([]); setSelectedEdgeIds([]); setContextMenu(null); }}
             onPaneContextMenu={handlePaneContextMenu}
             onInit={(instance) => { setRfInstance(instance); instance.zoomTo(DEFAULT_ZOOM, { duration: 0 }); setZoomPercent(100); }}
-            onMove={(_, viewport) => setZoomPercent(Math.round((viewport.zoom / DEFAULT_ZOOM) * 100))}
+            onMove={(_, viewport) => {
+              setZoomPercent(Math.round((viewport.zoom / DEFAULT_ZOOM) * 100));
+              // Emit a DOM event so the tutorial can detect panning without
+              // wiring tutorial logic into React Flow internals.
+              const canvasEl = document.querySelector('[data-tutorial="canvas"]');
+              canvasEl?.dispatchEvent(new CustomEvent("fs-viewport-moved", { bubbles: true }));
+            }}
             minZoom={MIN_ZOOM}
             maxZoom={MAX_ZOOM}
             panOnDrag={!canvasLocked}
@@ -977,7 +931,10 @@ export function LabPage(): JSX.Element {
             zoomOnDoubleClick={!canvasLocked}
             selectionOnDrag
             selectionKeyCode="Shift"
-            multiSelectionKeyCode="Shift"
+            // Accept both Ctrl (Windows / Linux), Meta (macOS ⌘) and Shift
+            // as multi-select modifiers so Ctrl+click also toggles a node in
+            // the current selection.
+            multiSelectionKeyCode={["Control", "Meta", "Shift"]}
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} color={isLightTheme ? "#d1d5db" : "#2b2b2b"} gap={24} size={1} />
@@ -985,63 +942,114 @@ export function LabPage(): JSX.Element {
         </div>
       </div>
 
-      {contextMenu ? (
-        <div className="lab-context-menu" style={{ left: contextMenu.screenX, top: contextMenu.screenY }} onMouseLeave={() => setContextMenu(null)}>
-          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("stock")}>+ Stock</button>
-          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("flow")}>+ Flow</button>
-          <button className="lab-context-item" onClick={() => handleContextMenuAddNode("commentNode")} data-tutorial="ctx-comment">+ Comment</button>
-        </div>
-      ) : null}
+      <LabContextMenu
+        position={contextMenu ? { screenX: contextMenu.screenX, screenY: contextMenu.screenY } : null}
+        onAdd={handleContextMenuAddNode}
+        onDismiss={() => setContextMenu(null)}
+      />
 
-      {addCommentNodeId ? (
-        <div className="lab-comment-entry-overlay" data-tutorial="comment-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setAddCommentNodeId(null); }}>
-          <div className="lab-comment-entry" data-tutorial="comment-entry">
-            <div className="lab-comment-entry-title">Add comment</div>
-            <textarea className="lab-comment-entry-textarea" autoFocus rows={4} placeholder="Write your comment..." value={commentDraft} onChange={(e) => setCommentDraft(e.target.value)} />
-            <div className="lab-comment-entry-actions">
-              <button className="lab-btn lab-btn-secondary" onClick={() => {
-                const store = useLabStore.getState();
-                store.onNodesChange([]);
-                store.setSelectedNodeId(addCommentNodeId);
-                store.updateSelectedNode({ text: commentDraft });
-                store.setSelectedNodeId(null);
-                setAddCommentNodeId(null);
-                setCommentDraft("");
-              }}>Save</button>
-              <button className="lab-btn lab-btn-secondary" onClick={() => {
-                useLabStore.getState().onNodesChange([{ type: "remove", id: addCommentNodeId }]);
-                setAddCommentNodeId(null);
-                setCommentDraft("");
-              }}>Cancel</button>
+      <CommentEntryOverlay
+        isOpen={Boolean(addCommentNodeId)}
+        draft={commentDraft}
+        onDraftChange={setCommentDraft}
+        onSave={() => {
+          if (!addCommentNodeId) return;
+          const store = useLabStore.getState();
+          store.onNodesChange([]);
+          store.setSelectedNodeId(addCommentNodeId);
+          store.updateSelectedNode({ text: commentDraft });
+          store.setSelectedNodeId(null);
+          setAddCommentNodeId(null);
+          setCommentDraft("");
+        }}
+        onCancel={() => {
+          if (!addCommentNodeId) return;
+          useLabStore.getState().onNodesChange([{ type: "remove", id: addCommentNodeId }]);
+          setAddCommentNodeId(null);
+          setCommentDraft("");
+        }}
+      />
+
+      <CanvasToolbar
+        canUndo={canUndo}
+        canRedo={canRedo}
+        canvasLocked={canvasLocked}
+        zoomPercent={zoomPercent}
+        onUndo={undo}
+        onRedo={redo}
+        onZoomReset={resetZoomToDefault}
+        onZoomIn={() => rfInstance?.zoomIn({ duration: 180 })}
+        onZoomOut={() => rfInstance?.zoomOut({ duration: 180 })}
+        onToggleCanvasLock={() => setCanvasLocked((prev) => !prev)}
+        onExport={() => { void exportJson(); }}
+        onOpenHelp={() => setIsHelpOpen(true)}
+      />
+
+      <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-left space-y-4" data-tutorial="task-panel">
+        {lessonTaskContext ? (
+          <div className="space-y-3" data-tutorial="task-block">
+            <div className="lab-task-pager">
+              <button
+                className="lab-task-pager-arrow"
+                type="button"
+                aria-label="Previous task"
+                title="Previous task"
+                onClick={() => { if (prevLessonTask) navigate(`/app/tasks/${prevLessonTask.id}`); }}
+                disabled={!prevLessonTask}
+              >
+                &#x2039;
+              </button>
+              <div className="lab-task-pager-meta">
+                <div className="text-sm lab-field">Task</div>
+                {lessonTasks.length > 0 && currentLessonTaskIndex >= 0 ? (
+                  <div className="lab-task-pager-count">
+                    {currentLessonTaskIndex + 1} / {lessonTasks.length}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                className="lab-task-pager-arrow"
+                type="button"
+                aria-label="Next task"
+                title="Next task"
+                onClick={() => { if (nextLessonTask) navigate(`/app/tasks/${nextLessonTask.id}`); }}
+                disabled={!nextLessonTask}
+              >
+                &#x203A;
+              </button>
+              <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsTaskModalOpen(true)}>
+                Full screen
+              </button>
             </div>
+            <div className="lab-task-card">
+              <div className="lab-task-card-title">{lessonTaskContext.taskTitle}</div>
+              <p className="lab-task-card-description">{lessonTaskContext.taskDescription}</p>
+            </div>
+            <div className={`text-xs ${isCurrentTaskCompleted ? "lab-task-status-completed" : "lab-muted"}`}>
+              {isCurrentTaskCompleted ? "Task marked as completed." : "Task is not completed yet."}
+            </div>
+            {lessonTasksQuery.isError ? <div className="text-xs lab-error">Unable to load lesson tasks.</div> : null}
+            <button
+              className="lab-btn lab-btn-primary w-full"
+              type="button"
+              onClick={handleMarkTaskCompleted}
+              disabled={isCurrentTaskCompleted || completeTaskMutation.isPending}
+              data-tutorial="mark-completed"
+            >
+              {isCurrentTaskCompleted ? "Task completed" : completeTaskMutation.isPending ? "Saving..." : "Mark task as completed"}
+            </button>
+            <button
+              className="lab-btn lab-btn-secondary w-full"
+              type="button"
+              onClick={handleTaskProgressNavigation}
+              disabled={!canResolveLessonNavigation}
+              data-tutorial="finish-lesson"
+            >
+              {!canResolveLessonNavigation ? "Loading lesson tasks..." : nextLessonTask ? "Go to next task" : "Finish lesson"}
+            </button>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <div className="lab-canvas-toolbar" role="group" aria-label="Canvas controls" data-tutorial="toolbar">
-        <button className="lab-canvas-btn" type="button" onClick={resetZoomToDefault} aria-label="Reset zoom to 100%" title="Reset zoom to 100%" data-tutorial="zoom-reset">
-          <span aria-hidden="true">&#x2922;</span>
-        </button>
-        <div className="lab-canvas-sep" />
-        <button className="lab-canvas-btn" type="button" onClick={() => rfInstance?.zoomIn({ duration: 180 })} aria-label="Zoom in" title="Zoom in" data-tutorial="zoom-in">
-          <span aria-hidden="true">&#x2295;</span>
-        </button>
-        <div className="lab-canvas-zoom">{Math.max(1, zoomPercent)}%</div>
-        <button className="lab-canvas-btn" type="button" onClick={() => rfInstance?.zoomOut({ duration: 180 })} aria-label="Zoom out" title="Zoom out" data-tutorial="zoom-out">
-          <span aria-hidden="true">&#x2296;</span>
-        </button>
-        <div className="lab-canvas-sep" />
-        <button className={`lab-canvas-btn ${canvasLocked ? "lab-canvas-btn-active" : ""}`} type="button" onClick={() => setCanvasLocked((prev) => !prev)} aria-label={canvasLocked ? "Unlock workspace" : "Lock workspace"} title={canvasLocked ? "Unlock workspace" : "Lock workspace"} data-tutorial="lock-canvas">
-          <span className="lab-canvas-lock-icon" aria-hidden="true"><LockToggleIcon locked={canvasLocked} /></span>
-        </button>
-        <div className="lab-canvas-sep" />
-        <button className="lab-canvas-btn lab-canvas-export" type="button" onClick={exportJson} data-tutorial="export">
-          <span>Export</span>
-          <span aria-hidden="true">&#x21E9;</span>
-        </button>
-      </div>
-
-      <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-left space-y-4">
         <h3 className="lab-panel-title">Simulation</h3>
         <label className="block text-sm lab-field" data-tutorial="steps">
           <span className="lab-label-row">
@@ -1079,28 +1087,6 @@ export function LabPage(): JSX.Element {
           </div>
         </div>
 
-        {lessonTaskContext ? (
-          <div className="lab-divider pt-4 space-y-3">
-            <div className="lab-chart-head">
-              <span className="text-sm lab-field">Task</span>
-              <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsTaskModalOpen(true)}>Full screen</button>
-            </div>
-            <div className="lab-task-card">
-              <div className="lab-task-card-title">{lessonTaskContext.taskTitle}</div>
-              <p className="lab-task-card-description">{lessonTaskContext.taskDescription}</p>
-            </div>
-            <div className={`text-xs ${isCurrentTaskCompleted ? "lab-task-status-completed" : "lab-muted"}`}>
-              {isCurrentTaskCompleted ? "Task marked as completed." : "Task is not completed yet."}
-            </div>
-            {lessonTasksQuery.isError ? <div className="text-xs lab-error">Unable to load lesson tasks.</div> : null}
-            <button className="lab-btn lab-btn-primary w-full" type="button" onClick={handleMarkTaskCompleted} disabled={isCurrentTaskCompleted || completeTaskMutation.isPending}>
-              {isCurrentTaskCompleted ? "Task completed" : completeTaskMutation.isPending ? "Saving..." : "Mark task as completed"}
-            </button>
-            <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={handleTaskProgressNavigation} disabled={!canResolveLessonNavigation}>
-              {!canResolveLessonNavigation ? "Loading lesson tasks..." : nextLessonTask ? "Go to next task" : "Finish lesson"}
-            </button>
-          </div>
-        ) : null}
       </aside>
 
       <aside className="lab-glass-panel lab-side-panel lab-floating-panel lab-floating-panel-right lab-floating-panel-editor space-y-4">
@@ -1112,8 +1098,19 @@ export function LabPage(): JSX.Element {
           </div>
           <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={createNewSystem} disabled={lockEditing} data-tutorial="create-new-system">Create new system</button>
           {activeSystemId && !isAdmin ? (
-            <button className={`lab-btn lab-btn-secondary w-full ${submitForReviewMutation.isSuccess ? "lab-btn-save-idle" : ""}`} type="button" onClick={handleSubmitForReview} disabled={submitForReviewMutation.isPending || submitForReviewMutation.isSuccess} title="Submit this system to an admin for review">
+            <button className={`lab-btn lab-btn-secondary w-full ${submitForReviewMutation.isSuccess ? "lab-btn-save-idle" : ""}`} type="button" onClick={handleSubmitForReview} disabled={submitForReviewMutation.isPending || submitForReviewMutation.isSuccess} title="Submit this system to a teacher for review">
               {submitForReviewMutation.isPending ? "Submitting..." : submitForReviewMutation.isSuccess ? "Submitted for review \u2713" : "Submit for review"}
+            </button>
+          ) : null}
+          {activeSystemId && isAdmin && isReviewingAsTeacher ? (
+            <button
+              className="lab-btn lab-btn-primary w-full"
+              type="button"
+              onClick={() => setIsReviewModalOpen(true)}
+              disabled={markReviewedMutation.isPending}
+              title="Mark this student's system as reviewed and send them feedback"
+            >
+              {markReviewedMutation.isPending ? "Saving..." : "Mark as reviewed"}
             </button>
           ) : null}
           {saveAttempted && saveBlockedReason ? <div className="text-xs lab-error">{saveBlockedReason}</div> : null}
@@ -1129,15 +1126,79 @@ export function LabPage(): JSX.Element {
           {lockEditing ? "Editing is locked while animation is running." : "Select a node or edge. Stock -> Flow = outflow (-, red). Flow -> Stock = inflow (+, green)."}
         </div>
 
-        {selectedNode ? (
+        {selectedNode && selectedNodeLoop ? (
+          <div className="space-y-2 lab-loop-aux-card" data-tutorial="feedback-loop-card">
+            <div className="lab-loop-aux-head">
+              <span className={`lab-loop-aux-type-pill lab-loop-aux-type-pill--${selectedNodeLoop.type}`}>
+                {selectedNodeLoop.type === "balancing" ? "Balancing" : "Reinforcing"} feedback loop
+              </span>
+              {selectedNodeLoopRoleLabel ? (
+                <span className="lab-loop-aux-role-pill">{selectedNodeLoopRoleLabel}</span>
+              ) : null}
+            </div>
+            <div className="text-sm lab-field">
+              <div className="lab-loop-aux-name">
+                {(selectedNodeLoop.name ?? "").trim() || (
+                  <span className="lab-muted">Unnamed loop</span>
+                )}
+              </div>
+            </div>
+            <div className="text-xs lab-muted space-y-0.5">
+              <div>Stock: {String(nodesById.get(selectedNodeLoop.stockId)?.data?.label ?? selectedNodeLoop.stockId)}</div>
+              <div>
+                Controlled flow: {String(nodesById.get(selectedNodeLoop.controlledFlowId)?.data?.label ?? selectedNodeLoop.controlledFlowId)}
+              </div>
+              {selectedNodeLoop.type === "balancing" ? (
+                <div>
+                  Goal: {selectedNodeLoop.goalValue} ({selectedNodeLoop.boundaryType} bound, {selectedNodeLoop.operation}) · t={selectedNodeLoop.adjustmentTime}
+                </div>
+              ) : (
+                <div>
+                  k={selectedNodeLoop.k} · {selectedNodeLoop.polarity}
+                  {selectedNodeLoop.growthLimitNodeId ? " · growth limit" : ""}
+                </div>
+              )}
+              {selectedNodeLoop.delayEnabled ? <div>Delay: {selectedNodeLoop.delaySteps} step(s)</div> : null}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className="lab-btn lab-btn-primary"
+                type="button"
+                disabled={lockEditing}
+                onClick={() => {
+                  setCreateFeedbackLoopStockId(null);
+                  setEditingFeedbackLoopId(selectedNodeLoop.id);
+                }}
+              >
+                Edit feedback loop
+              </button>
+              <button
+                className="lab-btn lab-btn-secondary"
+                type="button"
+                disabled={lockEditing}
+                onClick={() => {
+                  if (!window.confirm("Delete this feedback loop?")) return;
+                  const result = deleteBalancingFeedbackLoop(selectedNodeLoop.id);
+                  if (!result.ok) window.alert(result.error);
+                  setEditingFeedbackLoopId((prev) => (prev === selectedNodeLoop.id ? null : prev));
+                }}
+              >
+                Delete loop
+              </button>
+            </div>
+            <div className="text-xs lab-muted">
+              This node is part of a feedback loop. Edit the loop to change its name or parameters — individual node fields are managed by the loop definition.
+            </div>
+          </div>
+        ) : selectedNode ? (
           <div className="space-y-2">
             <label className="block text-xs lab-field" data-tutorial="node-name">
               Name
               <input className="lab-input mt-1" disabled={lockEditing} value={String(selectedNode.data?.label ?? "")} onChange={(e) => updateSelectedNode({ label: e.target.value })} placeholder="Label" />
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <button className="lab-btn lab-btn-secondary" type="button" onClick={() => copySingleNode(selectedNode.id)} disabled={lockEditing} title="Copy node (Ctrl/Cmd+C)">Copy</button>
-              <button className="lab-btn lab-btn-secondary" type="button" onClick={() => deleteSingleNode(selectedNode.id)} disabled={lockEditing} title="Delete node">Delete</button>
+              <button className="lab-btn lab-btn-secondary" type="button" data-tutorial="copy-node" onClick={() => copySingleNode(selectedNode.id)} disabled={lockEditing} title="Copy node (Ctrl/Cmd+C)">Copy</button>
+              <button className="lab-btn lab-btn-secondary" type="button" data-tutorial="delete-node" onClick={() => deleteSingleNode(selectedNode.id)} disabled={lockEditing} title="Delete node">Delete</button>
             </div>
             {isFlowNode(selectedNode) ? (
               <label className="block text-xs lab-field" data-tutorial="node-bottleneck">
@@ -1154,6 +1215,44 @@ export function LabPage(): JSX.Element {
               <span className="lab-label-row"><span>Unit (optional)</span><span className="lab-help-dot" title="Optional metadata, for example kg, items, or L." aria-label="Unit help">?</span></span>
               <input className="lab-input mt-1" disabled={lockEditing} type="text" value={String(selectedNode.data?.unit ?? "")} onChange={(e) => updateSelectedNode({ unit: e.target.value })} placeholder="e.g. kg, items, L" />
             </label>
+            {selectedNodeIsControlSource ? (
+              <div className="space-y-1" data-tutorial="node-op">
+                <span className="lab-label-row text-xs lab-field">
+                  <span>Operation</span>
+                  <span
+                    className="lab-help-dot"
+                    title="Defines how this constant or variable influences the connected flow's bottleneck. The symbol and color appear on every outgoing arrow."
+                    aria-label="Operation help"
+                  >?</span>
+                </span>
+                <div className="lab-op-picker" role="group" aria-label="Control operation">
+                  {CONTROL_OPS.map((op) => {
+                    const opColor = labColorTokens.control[op.value];
+                    const isActive = selectedNodeOp === op.value;
+                    return (
+                      <button
+                        key={op.value}
+                        type="button"
+                        className={`lab-op-btn ${isActive ? "is-active" : ""}`}
+                        disabled={lockEditing}
+                        onClick={() => setSelectedNodeControlOp(op.value)}
+                        aria-pressed={isActive}
+                        title={`${op.label}  (${op.value})`}
+                        style={isActive
+                          ? { color: "#ffffff", background: opColor, borderColor: opColor }
+                          : { color: opColor, borderColor: opColor }}
+                      >
+                        <span className="lab-op-btn-symbol">{op.label}</span>
+                        <span className="lab-op-btn-name">{op.value}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="lab-op-hint text-xs lab-muted">
+                  Each outgoing arrow uses this operation&apos;s color and symbol.
+                </p>
+              </div>
+            ) : null}
             {isSelectedStock ? (
               <div className="space-y-2">
                 <button className="lab-btn lab-btn-secondary w-full" type="button" onClick={() => { setEditingFeedbackLoopId(null); setCreateFeedbackLoopStockId(selectedNode.id); }} disabled={lockEditing}>Create Feedback Loop</button>
@@ -1223,7 +1322,7 @@ export function LabPage(): JSX.Element {
             </span>
             <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsChartModalOpen(true)} data-tutorial="chart-expand">Expand</button>
           </div>
-          <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight={220} isLightTheme={isLightTheme} nodes={nodes} feedbackLoops={feedbackLoops} selectedNodeId={selectedNodeId} />
+          <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight={220} isLightTheme={isLightTheme} nodes={nodes} edges={edges} feedbackLoops={feedbackLoops} selectedNodeId={selectedNodeId} onFocusIndexChange={setSliderIndex} />
         </div>
       </aside>
 
@@ -1274,7 +1373,19 @@ export function LabPage(): JSX.Element {
               <h3 className="lab-panel-title">Simulation chart</h3>
               <button className="lab-btn lab-btn-secondary lab-btn-compact" type="button" onClick={() => setIsChartModalOpen(false)}>Close</button>
             </div>
-            <SimulationChart steps={simulationSteps} focusIndex={sliderIndex} chartHeight="72vh" isLightTheme={isLightTheme} nodes={nodes} feedbackLoops={feedbackLoops} selectedNodeId={selectedNodeId} />
+            <SimulationChart
+              steps={simulationSteps}
+              focusIndex={sliderIndex}
+              chartHeight="68vh"
+              isLightTheme={isLightTheme}
+              nodes={nodes}
+              edges={edges}
+              feedbackLoops={feedbackLoops}
+              selectedNodeId={selectedNodeId}
+              enableZoom
+              showTimeline
+              onFocusIndexChange={setSliderIndex}
+            />
           </div>
         </div>
       ) : null}
@@ -1294,7 +1405,19 @@ export function LabPage(): JSX.Element {
         </div>
       ) : null}
 
-      <TutorialOverlay onFinish={handleMarkTaskCompleted} />
+      <MarkReviewedModal
+        isOpen={isReviewModalOpen}
+        systemTitle={title}
+        isSubmitting={markReviewedMutation.isPending}
+        onClose={() => setIsReviewModalOpen(false)}
+        onSubmit={async (comment) => {
+          if (!activeSystemId) return;
+          await markReviewedMutation.mutateAsync({ systemId: activeSystemId, comment });
+        }}
+      />
+
+      <LabHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
     </section>
   );
 }

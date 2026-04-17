@@ -30,7 +30,10 @@ function AnimatedParticleEdgeInner({
     targetPosition,
   });
 
-  const strokeColor = (style?.stroke as string) ?? "#6b7280";
+  // Fall back to the colorblind-aware neutral edge CSS variable instead of a
+  // hardcoded gray so particles on edges without an explicit stroke still
+  // respect the selected colorblind palette.
+  const strokeColor = (style?.stroke as string) ?? "var(--lab-edge-neutral, #6b7280)";
 
   const animate = Boolean(data?.animate);
   const kind: string = (data?.kind as string) ?? "neutral";

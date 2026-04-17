@@ -1,5 +1,5 @@
 from backend.db import Base
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 
 
 class User(Base):
@@ -12,3 +12,5 @@ class User(Base):
     last_name = Column(String, nullable=False)
     is_admin = Column(Boolean, nullable=False, default=False)
     avatar_path = Column(String, nullable=True)
+    reset_token = Column(String, nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)

@@ -1,26 +1,33 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
+from backend.models.notifications import Notification
 from backend.models.systems import SystemModel
 from backend.models.users import User
+from backend.utils.db import commit, commit_and_refresh
+from backend.utils.errors import (
+    AccessDeniedError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 
 
-class SystemNotFoundError(ValueError):
-    pass
+SystemNotFoundError = NotFoundError
+SystemAccessDeniedError = AccessDeniedError
+DuplicateSystemTitleError = ConflictError
 
 
-class SystemAccessDeniedError(PermissionError):
-    pass
+def _sanitize_title(title: str) -> str:
+    return " ".join(str(title).strip().split())
 
 
-class DuplicateSystemTitleError(ValueError):
-    pass
+def _normalize_title(title: str) -> str:
+    return _sanitize_title(title).lower()
 
 
 class SystemModelService:
-    @staticmethod
-    def _normalized_title(title: str) -> str:
-        return " ".join(str(title).strip().split()).lower()
-
     @staticmethod
     def _ensure_unique_title(
         db: Session,
@@ -30,18 +37,13 @@ class SystemModelService:
     ) -> None:
         if owner_id is None:
             return
-        normalized = SystemModelService._normalized_title(title)
+        normalized = _normalize_title(title)
         query = db.query(SystemModel).filter(SystemModel.owner_id == owner_id)
         if exclude_id is not None:
             query = query.filter(SystemModel.id != exclude_id)
-        existing = query.all()
-        for item in existing:
-            if SystemModelService._normalized_title(item.title) == normalized:
-                raise DuplicateSystemTitleError("System with this title already exists")
-
-    @staticmethod
-    def _sanitize_title(title: str) -> str:
-        return " ".join(str(title).strip().split())
+        for item in query.all():
+            if _normalize_title(item.title) == normalized:
+                raise ConflictError("System with this title already exists")
 
     @staticmethod
     def _build_unique_title(
@@ -50,22 +52,22 @@ class SystemModelService:
         title: str,
         exclude_id: int | None = None,
     ) -> str:
-        clean_title = SystemModelService._sanitize_title(title)
+        clean_title = _sanitize_title(title)
         if not clean_title:
-            raise ValueError("Title is required")
+            raise ValidationError("Title is required")
         if owner_id is None:
             return clean_title
         try:
             SystemModelService._ensure_unique_title(db, owner_id, clean_title, exclude_id=exclude_id)
             return clean_title
-        except DuplicateSystemTitleError:
+        except ConflictError:
             suffix = 2
             while True:
                 candidate = f"{clean_title} ({suffix})"
                 try:
                     SystemModelService._ensure_unique_title(db, owner_id, candidate, exclude_id=exclude_id)
                     return candidate
-                except DuplicateSystemTitleError:
+                except ConflictError:
                     suffix += 1
 
     @staticmethod
@@ -79,9 +81,9 @@ class SystemModelService:
         is_public: bool = False,
         is_template: bool = False,
     ) -> SystemModel:
-        clean_title = SystemModelService._sanitize_title(title)
+        clean_title = _sanitize_title(title)
         if not clean_title:
-            raise ValueError("Title is required")
+            raise ValidationError("Title is required")
         SystemModelService._ensure_unique_title(db, owner_id, clean_title)
         model = SystemModel(
             owner_id=owner_id,
@@ -93,19 +95,13 @@ class SystemModelService:
             is_template=is_template,
         )
         db.add(model)
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+        return commit_and_refresh(db, model)
 
     @staticmethod
     def get(db: Session, model_id: int) -> SystemModel:
         model = db.query(SystemModel).filter(SystemModel.id == model_id).first()
         if not model:
-            raise SystemNotFoundError(f"Model with id {model_id} not found")
+            raise NotFoundError(f"Model with id {model_id} not found")
         return model
 
     @staticmethod
@@ -124,95 +120,93 @@ class SystemModelService:
     def ensure_view_access(model: SystemModel, user_id: int, is_admin: bool = False) -> None:
         if is_admin or model.owner_id == user_id or model.is_public:
             return
-        raise SystemAccessDeniedError("You do not have access to this system")
+        raise AccessDeniedError("You do not have access to this system")
 
     @staticmethod
     def ensure_write_access(model: SystemModel, user_id: int, is_admin: bool = False) -> None:
         if is_admin or model.owner_id == user_id:
             return
-        raise SystemAccessDeniedError("You do not have permission to modify this system")
+        raise AccessDeniedError("You do not have permission to modify this system")
 
     @staticmethod
     def update(db: Session, model_id: int, fields: dict) -> SystemModel:
         model = SystemModelService.get(db, model_id)
         if "title" in fields:
-            clean_title = SystemModelService._sanitize_title(str(fields["title"]))
+            clean_title = _sanitize_title(str(fields["title"]))
             if not clean_title:
-                raise ValueError("Title is required")
+                raise ValidationError("Title is required")
             SystemModelService._ensure_unique_title(db, model.owner_id, clean_title, exclude_id=model.id)
             fields["title"] = clean_title
         for key, value in fields.items():
             setattr(model, key, value)
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+        return commit_and_refresh(db, model)
 
     @staticmethod
     def delete(db: Session, model_id: int) -> SystemModel:
         model = SystemModelService.get(db, model_id)
         db.delete(model)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        commit(db)
         return model
 
     @staticmethod
     def submit_for_review(db: Session, model_id: int) -> SystemModel:
         model = SystemModelService.get(db, model_id)
         model.is_submitted_for_review = True
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+        return commit_and_refresh(db, model)
 
     @staticmethod
     def mark_changes_seen(db: Session, model_id: int) -> SystemModel:
         model = SystemModelService.get(db, model_id)
         model.has_unseen_changes = False
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+        return commit_and_refresh(db, model)
 
     @staticmethod
-    def mark_reviewed(db: Session, model_id: int) -> SystemModel:
+    def mark_reviewed(
+        db: Session,
+        model_id: int,
+        reviewer_id: int | None = None,
+        comment: str | None = None,
+    ) -> SystemModel:
         model = SystemModelService.get(db, model_id)
         model.is_submitted_for_review = False
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+
+        clean_comment = (comment or "").strip() or None
+        owner_needs_notification = (
+            model.owner_id is not None and model.owner_id != reviewer_id
+        )
+        if owner_needs_notification:
+            db.add(
+                Notification(
+                    recipient_user_id=model.owner_id,
+                    sender_user_id=reviewer_id,
+                    system_id=model.id,
+                    system_title=model.title,
+                    kind="review",
+                    title=f'Your system "{model.title}" was reviewed',
+                    body=clean_comment,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+        return commit_and_refresh(db, model)
 
     @staticmethod
-    def list_pending_review(db: Session) -> list[tuple[SystemModel, User | None]]:
-        rows = (
+    def list_pending_review_with_owners(db: Session) -> list[tuple[SystemModel, User | None]]:
+        return (
             db.query(SystemModel, User)
             .outerjoin(User, SystemModel.owner_id == User.id)
             .filter(SystemModel.is_submitted_for_review == True)  # noqa: E712
             .all()
         )
-        return rows
+
+    @staticmethod
+    def sanitize_title(title: str) -> str:
+        return _sanitize_title(title)
 
     @staticmethod
     def get_or_create_user_copy_from_template(db: Session, template_id: int, user_id: int) -> SystemModel:
         template = SystemModelService.get(db, template_id)
         if template.owner_id is not None or not template.is_template:
-            raise ValueError("Task system template is misconfigured")
+            raise ValidationError("Task system template is misconfigured")
 
         existing = (
             db.query(SystemModel)
@@ -233,10 +227,4 @@ class SystemModelService:
             is_template=False,
         )
         db.add(model)
-        try:
-            db.commit()
-            db.refresh(model)
-        except Exception:
-            db.rollback()
-            raise
-        return model
+        return commit_and_refresh(db, model)

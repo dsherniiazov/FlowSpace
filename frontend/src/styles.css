@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -62,6 +60,17 @@ body {
 
 .input:focus {
   border-color: var(--color-primary);
+}
+
+textarea.input {
+  min-height: 96px;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.mark-reviewed-textarea {
+  min-height: 120px;
 }
 
 .btn {
@@ -167,6 +176,7 @@ body {
   height: 30px;
   width: auto;
   display: block;
+  animation: logo-fadein 0.5s ease forwards;
 }
 
 .app-sidebar-section {
@@ -194,6 +204,24 @@ body {
   font-size: 14px;
   font-weight: 500;
   transition: background-color 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .app-nav-link:hover {
@@ -821,6 +849,20 @@ body {
   color: #f5f5f5;
 }
 
+.lab-canvas-btn:disabled,
+.lab-canvas-btn[aria-disabled="true"] {
+  color: #52525b;
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.lab-canvas-btn:disabled:hover,
+.lab-canvas-btn[aria-disabled="true"]:hover {
+  background: transparent;
+  color: #52525b;
+}
+
 .lab-canvas-btn-active {
   background: #131313;
   color: #f5f5f5;
@@ -857,6 +899,269 @@ body {
   font-size: 12px;
   font-weight: 600;
   font-family: "Inter", sans-serif;
+}
+
+.lab-canvas-help {
+  padding: 0 10px;
+  min-width: auto;
+  gap: 6px;
+}
+
+.lab-canvas-help-label {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: "Inter", sans-serif;
+}
+
+/* Help modal — systems-thinking quick reference */
+.lab-help-overlay {
+  z-index: 75;
+}
+
+.lab-help-modal {
+  width: min(780px, 96vw);
+  max-height: min(86vh, 860px);
+  background: var(--surface-panel, #0b0b0b);
+  color: var(--text-primary, #f5f5f5);
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.12));
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.lab-help-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--border-light, rgba(255, 255, 255, 0.08));
+}
+
+.lab-help-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary, #f5f5f5);
+}
+
+.lab-help-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary, #a3a3a3);
+  max-width: 54ch;
+  line-height: 1.4;
+}
+
+.lab-help-close {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary, #a3a3a3);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.lab-help-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary, #f5f5f5);
+  border-color: var(--border-light, rgba(255, 255, 255, 0.16));
+}
+
+.lab-help-search-wrap {
+  position: relative;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--border-light, rgba(255, 255, 255, 0.08));
+}
+
+.lab-help-search {
+  width: 100%;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.14));
+  color: var(--text-primary, #f5f5f5);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.lab-help-search::placeholder {
+  color: var(--text-secondary, #737373);
+}
+
+.lab-help-search:focus {
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #3b82f6) 22%, transparent);
+}
+
+.lab-help-suggestions {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.lab-help-suggestions-empty {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary, #a3a3a3);
+  padding: 8px 10px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.04));
+  border-radius: 8px;
+}
+
+.lab-help-suggestion {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.04));
+  color: var(--text-primary, #f5f5f5);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.lab-help-suggestion:hover,
+.lab-help-suggestion:focus-visible {
+  background: color-mix(in srgb, var(--color-primary, #3b82f6) 14%, var(--surface-elevated, rgba(255, 255, 255, 0.04)));
+  border-color: color-mix(in srgb, var(--color-primary, #3b82f6) 50%, transparent);
+  outline: none;
+}
+
+.lab-help-suggestion-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.lab-help-suggestion-sub {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #a3a3a3);
+  line-height: 1.35;
+}
+
+.lab-help-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px 20px 18px;
+  scroll-behavior: smooth;
+}
+
+.lab-help-card {
+  padding: 14px 14px 12px;
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.09));
+  border-radius: 12px;
+  margin-top: 12px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.lab-help-card.is-active {
+  border-color: var(--color-primary, #3b82f6);
+  background: color-mix(in srgb, var(--color-primary, #3b82f6) 10%, var(--surface-elevated, rgba(255, 255, 255, 0.04)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #3b82f6) 18%, transparent);
+}
+
+.lab-help-card-title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-primary, #f5f5f5);
+}
+
+.lab-help-card-summary {
+  margin: 4px 0 0;
+  font-size: 0.86rem;
+  color: var(--text-secondary, #cbd5e1);
+  line-height: 1.45;
+}
+
+.lab-help-card-paragraph {
+  margin: 8px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text-primary, #e5e5e5);
+}
+
+.lab-help-foot {
+  padding: 10px 20px 14px;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #a3a3a3);
+  border-top: 1px solid var(--border-light, rgba(255, 255, 255, 0.08));
+  text-align: right;
+}
+
+html[data-theme="light"] .lab-help-modal {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #e2e8f0;
+}
+
+html[data-theme="light"] .lab-help-title,
+html[data-theme="light"] .lab-help-card-title {
+  color: #0f172a;
+}
+
+html[data-theme="light"] .lab-help-subtitle,
+html[data-theme="light"] .lab-help-card-summary,
+html[data-theme="light"] .lab-help-suggestion-sub,
+html[data-theme="light"] .lab-help-suggestions-empty,
+html[data-theme="light"] .lab-help-foot {
+  color: #475569;
+}
+
+html[data-theme="light"] .lab-help-search,
+html[data-theme="light"] .lab-help-suggestion,
+html[data-theme="light"] .lab-help-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+html[data-theme="light"] .lab-help-card-paragraph {
+  color: #1e293b;
+}
+
+html[data-theme="light"] .lab-help-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+html[data-contrast="high"] .lab-help-modal,
+html[data-contrast="high"] .lab-help-search,
+html[data-contrast="high"] .lab-help-suggestion,
+html[data-contrast="high"] .lab-help-card {
+  border-color: var(--border-light) !important;
+  background: var(--surface-panel) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-contrast="high"] .lab-help-card.is-active {
+  border-color: var(--color-primary) !important;
+  box-shadow: inset 0 0 0 2px var(--color-primary) !important;
+}
+
+@media (max-width: 720px) {
+  .lab-canvas-help-label {
+    display: none;
+  }
 }
 
 .lab-system-panel {
@@ -897,6 +1202,13 @@ body {
 
 .lab-chart-viewport {
   min-width: 100%;
+}
+
+/* Drag-to-zoom affordance for the expanded simulation chart: show a crosshair
+   over the plot area so users understand they can highlight an interval. */
+.lab-chart-viewport.is-zoomable .recharts-cartesian-grid,
+.lab-chart-viewport.is-zoomable .recharts-surface {
+  cursor: crosshair;
 }
 
 .lab-chart-head {
@@ -943,6 +1255,67 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.lab-task-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lab-task-pager-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lab-task-pager-count {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+
+.lab-task-pager-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #2b2b2b;
+  border-radius: 6px;
+  background: #0d0d0d;
+  color: #e5e7eb;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.lab-task-pager-arrow:hover:not(:disabled) {
+  background: #171717;
+  border-color: #3f3f46;
+}
+
+.lab-task-pager-arrow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+html[data-theme="light"] .lab-task-pager-arrow {
+  background: #ffffff;
+  border-color: #d1d5db;
+  color: #111111;
+}
+
+html[data-theme="light"] .lab-task-pager-arrow:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+html[data-theme="light"] .lab-task-pager-count {
+  color: #6b7280;
 }
 
 .lab-task-card {
@@ -1036,6 +1409,13 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+/* Name input at the very top of the Create/Edit Feedback Loop modal. Sits
+   above the tabs and applies to both balancing + reinforcing loops. */
+.lab-loop-name-field {
+  display: block;
+  margin-bottom: 12px;
 }
 
 .profile-modal-overlay {
@@ -1710,32 +2090,32 @@ html[data-theme="light"] .lab-help-bubble::after {
 
 .lab-variable-discrepancy-positive .lab-line-node-label,
 .lab-variable-discrepancy-positive .lab-line-node-value {
-  color: #22c55e;
+  color: var(--lab-discrepancy-positive);
 }
 
 .lab-variable-discrepancy-positive {
-  border-color: #22c55e;
-  background: color-mix(in srgb, #22c55e 46%, #0a0a0a);
+  border-color: var(--lab-discrepancy-positive);
+  background: color-mix(in srgb, var(--lab-discrepancy-positive) 46%, #0a0a0a);
 }
 
 .lab-variable-discrepancy-negative .lab-line-node-label,
 .lab-variable-discrepancy-negative .lab-line-node-value {
-  color: #ef4444;
+  color: var(--lab-discrepancy-negative);
 }
 
 .lab-variable-discrepancy-negative {
-  border-color: #ef4444;
-  background: color-mix(in srgb, #ef4444 46%, #0a0a0a);
+  border-color: var(--lab-discrepancy-negative);
+  background: color-mix(in srgb, var(--lab-discrepancy-negative) 46%, #0a0a0a);
 }
 
 .lab-variable-discrepancy-neutral .lab-line-node-label,
 .lab-variable-discrepancy-neutral .lab-line-node-value {
-  color: #a3a3a3;
+  color: var(--lab-discrepancy-neutral);
 }
 
 .lab-variable-discrepancy-neutral {
-  border-color: #6b7280;
-  background: color-mix(in srgb, #6b7280 46%, #0a0a0a);
+  border-color: var(--lab-edge-neutral);
+  background: color-mix(in srgb, var(--lab-edge-neutral) 46%, #0a0a0a);
 }
 
 .lab-line-node-label {
@@ -1830,6 +2210,120 @@ html[data-theme="light"] .lab-help-bubble::after {
   cursor: pointer;
 }
 
+/* Operation picker shown when a Constant or Variable node is selected.
+   Each tile uses the colorblind-aware control-op color so the button, the
+   outgoing arrow's stroke, and the symbol on that arrow all match. */
+.lab-op-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.lab-op-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border: 1px solid;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  line-height: 1;
+}
+
+.lab-op-btn:hover:not(:disabled):not(.is-active) {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.lab-op-btn.is-active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.lab-op-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.lab-op-btn-symbol {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.lab-op-btn-name {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.lab-op-hint {
+  margin-top: 4px;
+}
+
+/* Side-panel card shown when the selected node belongs to a feedback loop.
+   Replaces the generic Constant/Variable editor so users see they're working
+   with a feedback loop rather than a standalone node. */
+.lab-loop-aux-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+}
+
+.lab-loop-aux-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.lab-loop-aux-type-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.lab-loop-aux-type-pill--balancing {
+  color: #fff;
+  background: color-mix(in srgb, var(--lab-flow-accent, #3b82f6) 72%, #0b0b0b);
+}
+
+.lab-loop-aux-type-pill--reinforcing {
+  color: #fff;
+  background: color-mix(in srgb, var(--lab-reinforcing-positive, #f59e0b) 72%, #0b0b0b);
+}
+
+.lab-loop-aux-role-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.18));
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.lab-loop-aux-name {
+  font-size: 13px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
 .lab-reactflow .react-flow__edge.lab-edge-inflow .react-flow__edge-path {
   stroke: #22c55e !important;
 }
@@ -1895,6 +2389,20 @@ html[data-theme="light"] .lab-help-bubble::after {
 @keyframes lab-particle-fadeout {
   from { opacity: 1; }
   to   { opacity: 0; }
+}
+
+@keyframes logo-fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.page-enter {
+  animation: page-enter 0.22s ease-out forwards;
 }
 
 .lab-edge-particle-label {
@@ -2642,6 +3150,7 @@ body {
   height: 50px;
   width: auto;
   display: block;
+  animation: logo-fadein 0.6s ease forwards;
 }
 
 .landing-canvas {
@@ -2779,6 +3288,203 @@ body {
   letter-spacing: -0.02em;
   font-weight: 500;
 }
+
+/* ===================================================================== */
+/* Landing v2 — modern refresh of the unauthenticated entry page.        */
+/* Prefix `.lp2-` keeps these rules isolated from the older landing CSS. */
+/* ===================================================================== */
+
+.lp2-shell {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(239, 68, 68, 0.16), transparent 52%),
+    radial-gradient(circle at 92% 100%, rgba(59, 130, 246, 0.14), transparent 52%),
+    #050505 !important;
+}
+html[data-theme="light"] .lp2-shell {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(239, 68, 68, 0.11), transparent 52%),
+    radial-gradient(circle at 92% 100%, rgba(59, 130, 246, 0.10), transparent 52%),
+    #fafafa !important;
+}
+
+/* Subtle dot-grid overlay — masked to fade toward edges. */
+.lp2-bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse 85% 70% at 55% 40%, #000 30%, transparent 78%);
+          mask-image: radial-gradient(ellipse 85% 70% at 55% 40%, #000 30%, transparent 78%);
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme="light"] .lp2-bg-grid {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.07) 1px, transparent 1px);
+}
+
+.lp2-bg-blob {
+  position: absolute;
+  width: 620px;
+  height: 620px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+  animation: lp2-blob-float 20s ease-in-out infinite;
+}
+.lp2-bg-blob-1 {
+  top: -240px;
+  right: -200px;
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.50), transparent 65%);
+}
+.lp2-bg-blob-2 {
+  bottom: -260px;
+  left: -220px;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.45), transparent 65%);
+  animation-delay: -9s;
+}
+html[data-theme="light"] .lp2-bg-blob-1 {
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.26), transparent 65%);
+}
+html[data-theme="light"] .lp2-bg-blob-2 {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.22), transparent 65%);
+}
+@keyframes lp2-blob-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(40px, -30px, 0); }
+}
+
+/* Nav */
+.lp2-nav {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: rgba(5, 5, 5, 0.55) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+}
+html[data-theme="light"] .lp2-nav {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* Register gets a gradient fill to stand out from Login. */
+.lp2-register-btn {
+  background: linear-gradient(135deg, #ef4444 0%, #3b82f6 100%) !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: none;
+  transition: opacity 0.15s ease;
+}
+.lp2-register-btn:hover {
+  opacity: 0.88;
+  color: #ffffff !important;
+}
+html[data-theme="light"] .lp2-register-btn {
+  color: #ffffff !important;
+  border-color: transparent !important;
+}
+
+/* Hero two-column grid */
+.lp2-hero {
+  position: relative;
+  z-index: 1;
+  /* flex-1 so the hero fills all vertical space between nav and footer */
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2.5rem;
+  align-items: center;
+}
+@media (min-width: 1024px) {
+  .lp2-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 3.5rem;
+  }
+}
+
+.lp2-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.lp2-title {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: clamp(2.8rem, 6.2vw, 5rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 700;
+  color: #fafafa;
+  max-width: 16ch;
+}
+html[data-theme="light"] .lp2-title {
+  color: #0a0a0a;
+}
+
+.lp2-title-accent {
+  background: linear-gradient(135deg, #ef4444 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline;
+}
+
+.lp2-lead {
+  margin-top: 1.3rem;
+  font-size: 1.075rem;
+  line-height: 1.72;
+  max-width: 52ch;
+  color: rgba(255, 255, 255, 0.62);
+  text-wrap: balance;
+}
+html[data-theme="light"] .lp2-lead {
+  color: rgba(10, 10, 10, 0.62);
+}
+
+/* Canvas fills whatever height the hero row provides, instead of a fixed 460px. */
+.lp2-canvas-bare {
+  position: relative;
+  z-index: 1;
+  /* Stretch to the hero row height on large screens; on mobile a min-height
+     keeps it usable when the grid is single-column. */
+  min-height: 420px;
+  height: 100%;
+}
+
+/* The ReactFlow surface itself is transparent — edges + nodes read against
+   the page background so they look embedded rather than boxed in a card. */
+.lp2-flow,
+.lp2-flow .react-flow__renderer,
+.lp2-flow .react-flow__background,
+.lp2-flow .react-flow__pane {
+  background: transparent !important;
+}
+.lp2-flow .react-flow__controls { display: none; }
+.lp2-flow .react-flow__minimap  { display: none; }
+.lp2-flow .react-flow__attribution { display: none; }
+
+/* Edges on the landing use the same stroke style as the lab. */
+.lp2-flow .react-flow__edge-path {
+  stroke: #4b5563;
+  stroke-width: 1.5;
+}
+
+/* Footer — no border, just a gentle gradient fade from transparent. */
+.lp2-footer {
+  position: relative;
+  z-index: 1;
+  color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+  /* transparent-to-page-background fade instead of a hard border line */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 40%);
+          mask-image: linear-gradient(to bottom, transparent, #000 40%);
+  padding-top: 16px;
+}
+html[data-theme="light"] .lp2-footer {
+  color: rgba(0, 0, 0, 0.38);
+}
+
 
 html[data-theme="dark"] .text-slate-900,
 html[data-theme="dark"] .text-slate-800,
@@ -3012,32 +3718,32 @@ html[data-theme="light"] .lab-reinforcing-marker-label {
 
 html[data-theme="light"] .lab-variable-discrepancy-positive .lab-line-node-label,
 html[data-theme="light"] .lab-variable-discrepancy-positive .lab-line-node-value {
-  color: #16a34a !important;
+  color: var(--lab-discrepancy-positive) !important;
 }
 
 html[data-theme="light"] .lab-variable-discrepancy-positive {
-  border-color: #16a34a !important;
-  background: color-mix(in srgb, #16a34a 18%, #ffffff) !important;
+  border-color: var(--lab-discrepancy-positive) !important;
+  background: color-mix(in srgb, var(--lab-discrepancy-positive) 18%, #ffffff) !important;
 }
 
 html[data-theme="light"] .lab-variable-discrepancy-negative .lab-line-node-label,
 html[data-theme="light"] .lab-variable-discrepancy-negative .lab-line-node-value {
-  color: #dc2626 !important;
+  color: var(--lab-discrepancy-negative) !important;
 }
 
 html[data-theme="light"] .lab-variable-discrepancy-negative {
-  border-color: #dc2626 !important;
-  background: color-mix(in srgb, #dc2626 18%, #ffffff) !important;
+  border-color: var(--lab-discrepancy-negative) !important;
+  background: color-mix(in srgb, var(--lab-discrepancy-negative) 18%, #ffffff) !important;
 }
 
 html[data-theme="light"] .lab-variable-discrepancy-neutral .lab-line-node-label,
 html[data-theme="light"] .lab-variable-discrepancy-neutral .lab-line-node-value {
-  color: #6b7280 !important;
+  color: var(--lab-discrepancy-neutral) !important;
 }
 
 html[data-theme="light"] .lab-variable-discrepancy-neutral {
-  border-color: #9ca3af !important;
-  background: color-mix(in srgb, #9ca3af 18%, #ffffff) !important;
+  border-color: var(--lab-edge-neutral) !important;
+  background: color-mix(in srgb, var(--lab-edge-neutral) 18%, #ffffff) !important;
 }
 
 html[data-theme="light"] .lab-stock-palette {
@@ -3062,6 +3768,18 @@ html[data-theme="light"] .lab-canvas-btn {
 html[data-theme="light"] .lab-canvas-btn:hover {
   background: #f3f4f6;
   color: #111111;
+}
+
+html[data-theme="light"] .lab-canvas-btn:disabled,
+html[data-theme="light"] .lab-canvas-btn[aria-disabled="true"] {
+  color: #cbd5e1;
+  background: transparent;
+}
+
+html[data-theme="light"] .lab-canvas-btn:disabled:hover,
+html[data-theme="light"] .lab-canvas-btn[aria-disabled="true"]:hover {
+  background: transparent;
+  color: #cbd5e1;
 }
 
 html[data-theme="light"] .lab-canvas-btn-active {
@@ -3491,6 +4209,109 @@ html[data-theme="light"] .control-tab-active {
 .profile-shell .profile-system-card {
   border: 1px solid var(--border-light);
   background: var(--surface-panel);
+}
+
+.profile-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-panel);
+}
+
+.profile-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.profile-tab:hover {
+  color: var(--text-primary);
+}
+
+.profile-tab.is-active {
+  background: var(--text-primary);
+  color: var(--surface-panel);
+}
+
+.profile-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.inbox-item {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.inbox-item:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--border-light));
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--surface-panel));
+}
+
+.inbox-item-unread {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--surface-panel));
+}
+
+.inbox-item-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbox-item-meta {
+  margin-top: 2px;
+}
+
+.inbox-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ef4444;
+  flex-shrink: 0;
+}
+
+.inbox-modal-body {
+  padding: 8px 0 16px;
+}
+
+.inbox-modal-text {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .profile-shell .profile-page-heading,
@@ -4493,6 +5314,18 @@ html[data-contrast="high"] .app-nav-link.active {
   box-shadow: inset 0 0 0 2px var(--color-primary);
 }
 
+/* Preserve active colorblind/size selection visuals when high contrast is on
+   so enabling high contrast does not appear to "reset" the colorblind preset. */
+html[data-contrast="high"] .settings-size-option.is-active,
+html[data-contrast="high"] .settings-mode-option.is-active {
+  border-color: var(--color-primary) !important;
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--surface-elevated)) !important;
+}
+
+html[data-contrast="high"] .settings-shortcut-binding.is-recording {
+  border-color: var(--color-primary) !important;
+}
+
 html[data-contrast="high"] .lab-editor-shell {
   --lab-grid-dot: color-mix(in srgb, var(--border-light) 78%, transparent);
 }
@@ -5129,7 +5962,9 @@ html[data-theme="dark"] .lab-comment-entry-textarea {
   position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
-  pointer-events: auto;
+  /* Backdrop is purely visual — clicks must pass through so all underlying
+     buttons/nodes/drag handles in the gray zone remain interactive. */
+  pointer-events: none;
   transition: clip-path 0.3s ease;
 }
 
@@ -5206,6 +6041,77 @@ html[data-theme="dark"] .lab-comment-entry-textarea {
 
 .tutorial-popup-compact .tutorial-popup-text {
   margin-bottom: 0;
+}
+
+.tutorial-popup-nav {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+.tutorial-popup-shortcut {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tutorial-popup-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  background: #f1f5f9;
+  color: #0f172a;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme="dark"] .tutorial-popup-kbd {
+  background: #0f172a;
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #e2e8f0;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+.tutorial-popup-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #1e293b;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.tutorial-popup-arrow:hover:not(:disabled) {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+.tutorial-popup-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+html[data-theme="dark"] .tutorial-popup-arrow {
+  background: #0f172a;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+
+html[data-theme="dark"] .tutorial-popup-arrow:hover:not(:disabled) {
+  background: #1e293b;
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 html[data-theme="dark"] .tutorial-popup {

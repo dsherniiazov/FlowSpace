@@ -11,12 +11,15 @@ from backend.routers.systems import router as systems_router
 from backend.routers.simulations import router as simulations_router
 from backend.routers.users import router as users_router
 from backend.routers.auth import router as auth_router
+from backend.routers.notifications import router as notifications_router
 from backend.config import settings
-from backend.seed import seed_intro
 from backend.db import SessionLocal
+from backend.seed import seed_intro
 from backend.storage_paths import get_files_dir
+from backend.utils.errors import DomainError, domain_error_handler
 
 app = FastAPI()
+app.add_exception_handler(DomainError, domain_error_handler)
 
 
 @app.on_event("startup")
@@ -48,3 +51,4 @@ app.include_router(systems_router)
 app.include_router(simulations_router)
 app.include_router(users_router)
 app.include_router(auth_router)
+app.include_router(notifications_router)
