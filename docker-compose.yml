@@ -16,7 +16,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ./backend
       dockerfile: backend/Dockerfile
     container_name: flowspace_api
     restart: always
@@ -33,8 +33,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: flowspace_frontend
     restart: always
     env_file:

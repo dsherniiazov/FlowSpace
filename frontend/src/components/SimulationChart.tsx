@@ -31,7 +31,7 @@ type Props = {
   nodes?: Node[];
   edges?: Edge[];
   feedbackLoops?: FeedbackLoop[];
-  selectedNodeId?: string | null;
+  focusedNodeIds?: string[];
   enableZoom?: boolean;
   showTimeline?: boolean;
   onFocusIndexChange?: (index: number) => void;
@@ -45,7 +45,7 @@ export function SimulationChart({
   nodes = [],
   edges = [],
   feedbackLoops = [],
-  selectedNodeId = null,
+  focusedNodeIds = [],
   enableZoom = false,
   showTimeline = false,
   onFocusIndexChange,
@@ -62,7 +62,7 @@ export function SimulationChart({
     nodes,
     edges,
     feedbackLoops,
-    selectedNodeId,
+    focusedNodeIds,
   });
 
   const contrastText = isLightTheme ? "#0f172a" : "#f8fafc";
@@ -75,12 +75,10 @@ export function SimulationChart({
   const tooltipTextColor = highContrastMode ? contrastText : isLightTheme ? "#111111" : "#f5f5f5";
   const refLineColor = highContrastMode ? contrastText : isLightTheme ? "#0f172a" : "#f5f5f5";
 
-  const basePalette = getChartColorPalette(colorblindMode, highContrastMode);
-  const chartPalette = useMemo(
-    () => buildUniquePalette(basePalette, displayKeys.length, isLightTheme),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [basePalette.join("|"), displayKeys.length, isLightTheme],
-  );
+  const chartPalette = useMemo(() => {
+    const basePalette = getChartColorPalette(colorblindMode, highContrastMode);
+    return buildUniquePalette(basePalette, displayKeys.length, isLightTheme);
+  }, [colorblindMode, highContrastMode, displayKeys.length, isLightTheme]);
   const keyColorMap = useMemo(() => {
     const map = new Map<string, string>();
     displayKeys.forEach((key, i) => map.set(key, chartPalette[i % chartPalette.length]));
@@ -147,7 +145,7 @@ export function SimulationChart({
               {focusedLabel}:{" "}
               {focusedValue != null && Number.isFinite(Number(focusedValue))
                 ? Number(focusedValue).toFixed(3)
-                : "—"}
+                : "N/A"}
             </span>
             <button
               type="button"

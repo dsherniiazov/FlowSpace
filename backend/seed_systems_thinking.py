@@ -1,40 +1,235 @@
-"""Seed systems-thinking lessons drawn from Donella Meadows' *Thinking in Systems*.
-
-Organisation
-------------
-Section "The Basics"      — Lessons 1-3  (stocks/flows, balancing & reinforcing loops)
-Section "System Dynamics" — Lessons 4-5  (delays & oscillation, S-shaped growth)
-Section "System Archetypes" — Lessons 6-8 (limits to growth, tragedy of commons, escalation)
-
-Each lesson has two tasks:
-  Task 1 — pre-built demonstration the learner can run immediately.
-  Task 2 — an open challenge with a minimal starting graph; no hints given.
-
-Graph format
-------------
-The stored graph_json is the *canonical* format expected by labStore.loadGraphJson:
-  nodes  → flat dicts with `kind`, `x`, `y`, `quantity`, `bottleneck`, `expression`, …
-  edges  → flat dicts with `kind`, `weight`, `feedback_loop`, …
-  feedbackLoops → list of BalancingFeedbackLoop / ReinforcingFeedbackLoop dicts
-"""
-
 from __future__ import annotations
+
+from copy import deepcopy
 
 from sqlalchemy.orm import Session
 
 from backend.models.lesson_tasks import LessonTask
 from backend.models.lessons import Lesson
+from backend.models.progress import UserProgress
 from backend.models.sections import Section
 from backend.models.systems import SystemModel
+from backend.models.user_task_progress import UserTaskProgress
+
+C_STOCK = "#1E40AF"
+C_AUX = "#8B5CF6"
+C_REINFORCING = "#F59E0B"
+C_DELAY = "#EAB308"
+C_STOCK_PALETTE = ["#2563EB", "#0891B2", "#16A34A", "#EA580C", "#DC2626", "#7C3AED", "#DB2777", "#0D9488"]
+C_FLOW_IN_PALETTE = ["#10B981", "#22C55E", "#14B8A6", "#06B6D4"]
+C_FLOW_OUT_PALETTE = ["#EF4444", "#F97316", "#E11D48", "#D97706"]
+C_FLOW_TRANSFER_PALETTE = ["#38BDF8", "#A855F7", "#F59E0B", "#84CC16"]
+C_AUX_PALETTE = ["#8B5CF6", "#0EA5E9", "#EC4899", "#F97316", "#14B8A6", "#EAB308"]
 
 
-# =============================================================================
-# Graph-builder helpers
-# =============================================================================
+def cycle_item(items: list[str], index: int) -> str:
+    return items[index % len(items)]
 
-def _node(
+
+def sentence_case(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
+
+
+def remove_task_leading_phrases(text: str) -> str:
+    """Remove scaffolding phrases before a single lesson-specific instruction is added."""
+    cleaned = " ".join(text.strip().split())
+    prefixes = (
+        "Reference graph: inspect the structure, run the simulation, and use it as an example. ",
+        "Almost complete: most stock and flow nodes are placed, but a couple of stock and flow connections are missing. ",
+        "Almost complete: most nodes are placed, but one formula and a couple of connections are missing. ",
+        "Blank canvas: build the model from the brief, run it, and explain the result. ",
+        "Start from an **empty graph**. ",
+        "Start from an empty graph. ",
+        "Start from a **blank canvas**. ",
+        "Start from a blank canvas. ",
+        "Start from a **blank canvas**, ",
+        "Start from a blank canvas, ",
+        "Start from a blank canvas and ",
+        "On a **blank canvas**, ",
+        "On a blank canvas, ",
+        "In a **new blank lab model** (or your notes), ",
+        "In a new blank lab model (or your notes), ",
+        "The canvas is **almost ready**: ",
+        "The canvas is almost ready: ",
+        "Open the **finished reference** graph ",
+        "Open the finished reference graph ",
+        "Open the finished graph ",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                changed = True
+    if cleaned.startswith("("):
+        closing = cleaned.find(")")
+        if closing > 0:
+            cleaned = f"Use the finished graph with {cleaned[1:closing]}{cleaned[closing + 1:]}"
+        else:
+            cleaned = f"Use the finished graph {cleaned}"
+    return sentence_case(cleaned)
+
+
+def blank_canvas_task_body(text: str) -> str:
+    cleaned = remove_task_leading_phrases(text)
+    replacements = (
+        ("In the shared pasture graph, identify", "Build a shared pasture model and identify"),
+        ("In the qualitative model, explain", "Build a qualitative model and explain"),
+        ("Using the forest diagram as a template, sketch (on paper or in a new lab file) how", "Build a model showing how"),
+        ("Run the ", "Build and run the "),
+        ("Run ", "Build and run "),
+        ("Simulate ", "Build and simulate "),
+        ("Map the model to ", "Build a model of "),
+        ("Map the commons structure to ", "Build a commons model for "),
+        ("Relabel the story mentally as ", "Build a new version of the story as "),
+        ("Interpret the stocks as ", "Build a version where the stocks are "),
+        ("Compare modeling ", "Build a boundary comparison for "),
+    )
+    for old, new in replacements:
+        if cleaned.startswith(old):
+            cleaned = new + cleaned[len(old):]
+            break
+    return sentence_case(cleaned)
+
+
+def colorize_graph(graph: dict) -> dict:
+    """Apply varied, role-aware node colors to seeded lesson graphs."""
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return graph
+
+    node_by_id = {str(node.get("id")): node for node in nodes if isinstance(node, dict)}
+    flow_roles: dict[str, set[str]] = {}
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = str(edge.get("source", ""))
+        target = str(edge.get("target", ""))
+        source_kind = node_by_id.get(source, {}).get("kind")
+        target_kind = node_by_id.get(target, {}).get("kind")
+        if source_kind == "flowNode" and target_kind == "stockNode":
+            flow_roles.setdefault(source, set()).add("in")
+        if source_kind == "stockNode" and target_kind == "flowNode":
+            flow_roles.setdefault(target, set()).add("out")
+
+    stock_index = flow_in_index = flow_out_index = flow_transfer_index = aux_index = 0
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        kind = node.get("kind")
+        if kind == "stockNode":
+            node["color"] = cycle_item(C_STOCK_PALETTE, stock_index)
+            stock_index += 1
+        elif kind == "flowNode":
+            roles = flow_roles.get(str(node.get("id")), set())
+            if roles == {"in", "out"}:
+                node["color"] = cycle_item(C_FLOW_TRANSFER_PALETTE, flow_transfer_index)
+                flow_transfer_index += 1
+            elif "out" in roles:
+                node["color"] = cycle_item(C_FLOW_OUT_PALETTE, flow_out_index)
+                flow_out_index += 1
+            else:
+                node["color"] = cycle_item(C_FLOW_IN_PALETTE, flow_in_index)
+                flow_in_index += 1
+        elif kind in {"constantNode", "variableNode"}:
+            existing = str(node.get("color", "")).strip()
+            semantic = node.get("feedback_loop_type") == "reinforcing" or existing == C_DELAY
+            if not semantic:
+                node["color"] = cycle_item(C_AUX_PALETTE, aux_index)
+                aux_index += 1
+    return graph
+
+
+def graph_node_size(node: dict) -> tuple[float, float]:
+    kind = node.get("kind")
+    if kind == "flowNode":
+        return 260, 88
+    if kind == "stockNode":
+        return 240, 96
+    if kind in {"constantNode", "variableNode"}:
+        return 235, 86
+    if kind == "commentNode" and node.get("boundary_mode"):
+        return float(node.get("frame_width", 400)), float(node.get("frame_height", 280))
+    if kind == "commentNode":
+        return 230, 58
+    return 230, 86
+
+
+def graph_nodes_overlap(a: dict, b: dict, *, padding: float = 34) -> bool:
+    ax, ay = float(a.get("x", 0)), float(a.get("y", 0))
+    bx, by = float(b.get("x", 0)), float(b.get("y", 0))
+    aw, ah = graph_node_size(a)
+    bw, bh = graph_node_size(b)
+    return ax < bx + bw + padding and ax + aw + padding > bx and ay < by + bh + padding and ay + ah + padding > by
+
+
+def beautify_graph_layout(graph: dict) -> dict:
+    """Spread seeded graphs so task canvases open as readable system pictures."""
+    nodes = graph.get("nodes", [])
+    if not isinstance(nodes, list) or len(nodes) < 2:
+        return graph
+
+    layout_nodes = [node for node in nodes if isinstance(node, dict)]
+    if not layout_nodes:
+        return graph
+
+    min_x = min(float(node.get("x", 0)) for node in layout_nodes)
+    min_y = min(float(node.get("y", 0)) for node in layout_nodes)
+    margin = 48
+    scale_x = 1.45
+    scale_y = 1.6
+
+    for node in layout_nodes:
+        node["x"] = round(margin + (float(node.get("x", 0)) - min_x) * scale_x)
+        node["y"] = round(margin + (float(node.get("y", 0)) - min_y) * scale_y)
+        if node.get("kind") == "commentNode" and node.get("boundary_mode"):
+            node["frame_width"] = round(float(node.get("frame_width", 400)) * scale_x)
+            node["frame_height"] = round(float(node.get("frame_height", 280)) * scale_y)
+
+    movable = [
+        node
+        for node in layout_nodes
+        if not (node.get("kind") == "commentNode" and node.get("boundary_mode"))
+    ]
+    movable.sort(key=lambda node: (float(node.get("y", 0)), float(node.get("x", 0)), str(node.get("id", ""))))
+
+    placed: list[dict] = []
+    for node in movable:
+        attempts = 0
+        while attempts < 80:
+            collider = next((other for other in placed if graph_nodes_overlap(other, node)), None)
+            if collider is None:
+                break
+            nx, ny = float(node.get("x", 0)), float(node.get("y", 0))
+            cx, cy = float(collider.get("x", 0)), float(collider.get("y", 0))
+            cw, ch = graph_node_size(collider)
+            move_right = cx + cw + 52 - nx
+            move_down = cy + ch + 52 - ny
+            if move_right < move_down and nx < cx + cw:
+                node["x"] = round(nx + max(52, move_right))
+            else:
+                node["y"] = round(ny + max(52, move_down))
+            attempts += 1
+        placed.append(node)
+
+    if placed:
+        min_x = min(float(node.get("x", 0)) for node in layout_nodes)
+        min_y = min(float(node.get("y", 0)) for node in layout_nodes)
+        if min_x != margin or min_y != margin:
+            for node in layout_nodes:
+                node["x"] = round(float(node.get("x", 0)) - min_x + margin)
+                node["y"] = round(float(node.get("y", 0)) - min_y + margin)
+
+    return graph
+
+def build_graph_node(
     kind: str,
-    id_: str,
+    node_id: str,
     label: str,
     x: int,
     y: int,
@@ -51,10 +246,13 @@ def _node(
     reinforcing_marker: bool = False,
     unit: str = "",
     color: str = "",
+    student_tooltip: str = "",
+    visual_theme: str = "",
+    fill_cap: float = 0,
 ) -> dict:
-    """Return a graph node in the format expected by labStore.loadGraphJson."""
-    return {
-        "id": id_,
+    """Return a graph node in the format expected by labStore.loadGraphJson"""
+    row: dict = {
+        "id": node_id,
         "kind": kind,
         "x": x,
         "y": y,
@@ -71,18 +269,48 @@ def _node(
         "reinforcing_marker": reinforcing_marker,
         "unit": unit,
         "color": color,
+        "student_tooltip": student_tooltip,
         "decay": 0,
         "bias": 0,
         "label": label,
     }
+    if visual_theme:
+        row["visual_theme"] = visual_theme
+    if fill_cap and kind == "stockNode":
+        row["fill_cap"] = fill_cap
+    return row
 
 
-def _stock(id_: str, label: str, x: int, y: int, *, quantity: float = 100, unit: str = "") -> dict:
-    return _node("stockNode", id_, label, x, y, quantity=quantity, unit=unit)
+def make_stock_node(
+    node_id: str,
+    label: str,
+    x: int,
+    y: int,
+    *,
+    quantity: float = 100,
+    unit: str = "",
+    color: str = C_STOCK,
+    student_tooltip: str = "",
+    visual_theme: str = "",
+    fill_cap: float = 0,
+) -> dict:
+    return build_graph_node(
+        "stockNode",
+        node_id,
+        label,
+        x,
+        y,
+        quantity=quantity,
+        unit=unit,
+        color=color,
+        student_tooltip=student_tooltip,
+        visual_theme=visual_theme,
+        fill_cap=fill_cap,
+    )
 
 
-def _flow(
-    id_: str,
+def make_flow_node(
+    node_id: str,
     label: str,
     x: int,
     y: int,
@@ -91,10 +319,12 @@ def _flow(
     expression: str = "",
     base_flow_expression: str = "",
     unit: str = "",
+    color: str = "",
+    student_tooltip: str = "",
 ) -> dict:
-    return _node(
+    return build_graph_node(
         "flowNode",
-        id_,
+        node_id,
         label,
         x,
         y,
@@ -103,11 +333,13 @@ def _flow(
         expression=expression,
         base_flow_expression=base_flow_expression,
         unit=unit,
+        color=color,
+        student_tooltip=student_tooltip,
     )
 
 
-def _variable(
-    id_: str,
+def make_variable_node(
+    node_id: str,
     label: str,
     x: int,
     y: int,
@@ -119,10 +351,12 @@ def _variable(
     persistent: bool = False,
     reinforcing_text_only: bool = False,
     unit: str = "",
+    color: str = "",
+    student_tooltip: str = "",
 ) -> dict:
-    return _node(
+    return build_graph_node(
         "variableNode",
-        id_,
+        node_id,
         label,
         x,
         y,
@@ -133,11 +367,13 @@ def _variable(
         feedback_loop_persistent=persistent,
         reinforcing_text_only=reinforcing_text_only,
         unit=unit,
+        color=color,
+        student_tooltip=student_tooltip,
     )
 
 
-def _constant(
-    id_: str,
+def make_constant_node(
+    node_id: str,
     label: str,
     x: int,
     y: int,
@@ -148,10 +384,12 @@ def _constant(
     fb_type: str = "",
     persistent: bool = False,
     unit: str = "",
+    color: str = C_AUX,
+    student_tooltip: str = "",
 ) -> dict:
-    return _node(
+    return build_graph_node(
         "constantNode",
-        id_,
+        node_id,
         label,
         x,
         y,
@@ -163,10 +401,12 @@ def _constant(
         feedback_loop_type=fb_type,
         feedback_loop_persistent=persistent,
         unit=unit,
+        color=color,
+        student_tooltip=student_tooltip,
     )
 
 
-def _inflow(edge_id: str, flow_id: str, stock_id: str) -> dict:
+def make_inflow_edge(edge_id: str, flow_id: str, stock_id: str) -> dict:
     """Flow → Stock edge (adds to the stock)."""
     return {
         "id": edge_id,
@@ -184,7 +424,7 @@ def _inflow(edge_id: str, flow_id: str, stock_id: str) -> dict:
     }
 
 
-def _outflow(edge_id: str, stock_id: str, flow_id: str) -> dict:
+def make_outflow_edge(edge_id: str, stock_id: str, flow_id: str) -> dict:
     """Stock → Flow edge (draws from the stock)."""
     return {
         "id": edge_id,
@@ -202,7 +442,7 @@ def _outflow(edge_id: str, stock_id: str, flow_id: str) -> dict:
     }
 
 
-def _fb_edge(
+def make_feedback_edge(
     edge_id: str,
     source: str,
     target: str,
@@ -212,7 +452,7 @@ def _fb_edge(
     polarity: str = "",
     persistent: bool = False,
 ) -> dict:
-    """Feedback (info-only) edge — kind=neutral, feedback_loop=True."""
+    """Feedback (info-only) edge: kind=neutral, feedback_loop=True."""
     return {
         "id": edge_id,
         "source": source,
@@ -229,7 +469,7 @@ def _fb_edge(
     }
 
 
-def _balancing_loop(
+def make_balancing_loop(
     loop_id: str,
     stock_id: str,
     goal_id: str,
@@ -266,7 +506,7 @@ def _balancing_loop(
     }
 
 
-def _reinforcing_loop(
+def make_reinforcing_loop(
     loop_id: str,
     stock_id: str,
     multiplier_id: str,
@@ -299,219 +539,1170 @@ def _reinforcing_loop(
     return loop
 
 
-def _graph(nodes: list[dict], edges: list[dict], feedback_loops: list[dict] | None = None) -> dict:
-    return {"nodes": nodes, "edges": edges, "feedbackLoops": feedback_loops or []}
+def compose_graph(
+    nodes: list[dict],
+    edges: list[dict],
+    feedback_loops: list[dict] | None = None,
+    *,
+    lesson_ui: dict | None = None,
+) -> dict:
+    g: dict = {"nodes": nodes, "edges": edges, "feedbackLoops": feedback_loops or []}
+    if lesson_ui:
+        g["lessonUi"] = lesson_ui
+    return g
 
 
-EMPTY_GRAPH: dict = _graph([], [])
+def make_comment_node(
+    node_id: str,
+    text: str,
+    x: int,
+    y: int,
+    *,
+    boundary_mode: bool = False,
+    frame_width: int = 400,
+    frame_height: int = 280,
+) -> dict:
+    row: dict = {
+        "id": node_id,
+        "kind": "commentNode",
+        "x": x,
+        "y": y,
+        "comment_text": text,
+        "author_id": 0,
+        "author_name": "",
+        "author_email": "",
+        "author_avatar_path": None,
+    }
+    if boundary_mode:
+        row["boundary_mode"] = True
+        row["frame_width"] = frame_width
+        row["frame_height"] = frame_height
+    return row
+
+
+EMPTY_GRAPH: dict = compose_graph([], [])
+
+
+def make_almost_done_graph(
+    base_graph: dict,
+    *,
+    note: str,
+    clear_one_expression: bool = True,
+) -> dict:
+    """Create a scaffolded graph with a couple of intentional gaps for Task 2."""
+    graph = deepcopy(base_graph)
+    nodes = graph.setdefault("nodes", [])
+    edges = graph.setdefault("edges", [])
+
+    nodes.insert(
+        0,
+        make_comment_node(
+            f"todo_{len(nodes) + 1}",
+            note,
+            20,
+            20,
+        ),
+    )
+
+    if clear_one_expression:
+        for node in reversed(nodes):
+            if node.get("kind") in {"variableNode", "flowNode"} and str(node.get("expression", "")).strip():
+                node["label"] = f"{node.get('label', 'Finish this node')} (finish)"
+                node["expression"] = ""
+                node["student_tooltip"] = (
+                    "This is one of the intentionally missing details for Task 2: add the formula, "
+                    "then reconnect the missing information link(s) and run the simulation."
+                )
+                break
+
+    if len(edges) > 2:
+        feedback_edge_ids = [
+            str(edge.get("id"))
+            for edge in reversed(edges)
+            if edge.get("feedback_loop") is True or edge.get("kind") == "neutral"
+        ]
+        fallback_edge_ids = [str(edge.get("id")) for edge in reversed(edges)]
+        remove_ids = set((feedback_edge_ids or fallback_edge_ids)[:2])
+        graph["edges"] = [edge for edge in edges if str(edge.get("id")) not in remove_ids]
+        graph["feedbackLoops"] = []
+
+    return graph
 
 
 # =============================================================================
-# Section 1 — The Basics
+# Section 1: The Basics
 # =============================================================================
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Lesson 1: Stocks and Flows
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
-_STOCKS_FLOWS_CONTENT = """\
-## Stocks and Flows: The Foundation of Every System
+STOCKS_FLOWS_CONTENT = """\
 
-Donella Meadows opens *Thinking in Systems* with the simplest possible building \
-block: a **stock** and a **flow**.
+Let’s start with one of the simplest and most powerful ideas in systems thinking.
 
-**Stocks** are quantities that accumulate — they can be measured at any snapshot \
-in time. Water in a bathtub. Money in a bank account. Trees in a forest. People \
-in a population. Whatever can be said to *be* at a given moment is a stock.
+A **stock** is simply the amount of something that has built up over time.  
+It is a quantity you can measure right now, at any single moment, like taking a snapshot.  
 
-**Flows** are rates that change stocks over time. The tap fills the bathtub; the \
-drain empties it. Income adds to your balance; expenses reduce it. A stock \
-changes only through its flows — this is the fundamental rule.
+### Examples of Stocks
 
-### The Bathtub Analogy
+- the amount of water in a bathtub
+- the money sitting in your bank account
+- the number of trees in a forest
+- the number of people living in a city
 
-Imagine a bathtub:
-- The **water level** is the stock.
-- The **tap** is an inflow — it adds water per unit time.
-- The **drain** is an outflow — it removes water per unit time.
+If you can ask “How much is there *right now*?”, that’s a stock.
 
-If the tap runs faster than the drain, the level rises. If the drain exceeds the \
-tap, it falls. When they match exactly, the level holds constant — even though \
-water is actively flowing.
+A **flow** is what *changes* a stock. It is the *rate* at which something is added to or taken away from the stock over time.  
+Flows are always moving, they are never “frozen” at one moment.  
+
+### Examples of Flows
+
+- water pouring in from the faucet (inflow)
+- water going down the drain (outflow)
+- salary being deposited into your account (inflow)
+- money you spend every day (outflow)
+- babies being born (inflow to population)
+- people dying (outflow from population)
+
+Here is the most important rule:  
+**A stock can only change through its flows.** Nothing else affects the stock. If there are no flows, the stock stays exactly the same.
+
+### The Bathtub Metaphor
+
+The easiest way to understand this is to picture a bathtub:
+
+- The **water level** = the stock
+- The **faucet** = the inflow (adds water)
+- The **drain** = the outflow (removes water)
+
+What happens to the water level?  
+- If the faucet runs faster than the drain, the level **rises**.
+- If the drain pulls water out faster than the faucet adds it, the level **falls**.
+- If the inflow and outflow are exactly equal, the level **stays the same**, even though water is still flowing through the tub.
+
+This last situation, where the stock looks steady but things are still moving, is called **dynamic equilibrium**.
 
 ### Why Stocks Matter
 
-Stocks provide **inertia** — they resist sudden changes and buffer the system \
-against shocks. You cannot instantly empty a bathtub or double a population. \
-Stocks take time to change, which creates the characteristic *delays* that make \
-systems behave in ways we find surprising.
+Stocks give a system **inertia** and stability. They act like buffers or shock absorbers.  
+You cannot instantly empty a full bathtub, nor can you double the population of a city in a single day. Stocks take time to fill up or empty out. Those built in delays are what make real systems behave in ways that often surprise us.
 
-> **Key insight:** To change a stock quickly, you must change its flows \
-significantly. Small flow adjustments cause slow stock changes.
+Because stocks exist, inflows and outflows don’t have to happen at the same time or at the same speed.  
+You can receive your salary once a month but spend money every single day, the stock in your bank account makes that possible.
 
-In the first task below, observe how a simple inflow/outflow balance drives the \
-water level over time. In the second task, build the same structure yourself for \
-a bank account.\
+You can increase a stock in two ways:  
+- by increasing the inflow, **or**
+- by decreasing the outflow.
+
+Stocks are the **memory** of the system. They remember the entire history of all the inflows and outflows that have ever passed through it.
+
+> **Key insight:** If you want to change a stock quickly, you have to make big changes to its flows. Tiny adjustments to the flows will only cause very slow changes in the stock.
+
+### In the Lab
+
+Use the lab to connect each diagram to the simulation chart.
+
+- **Task 1: Town water supply**  
+  Observe a finished town water system and trace how water moves through reservoir, treatment, household storage, use, evaporation, waste, and leaks.
+- **Task 2: Personal budget transfers**  
+  Finish a personal budget transfer model by reconnecting the missing stock and flow links.
+- **Task 3: Household energy**  
+  Build a household energy model from a blank canvas using only stocks and flows.
+- **Task 4: Population age groups**  
+  Build population age groups with births, aging, and deaths.
 """
 
-_STOCKS_FLOWS_DEMO = _graph(
+STOCKS_FLOWS_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Water Tank", 350, 200, quantity=100, unit="liters"),
-        _flow("flow_1", "Tap",   80,  200, bottleneck=10, unit="liters/step"),
-        _flow("flow_2", "Drain", 620, 200, bottleneck=5,  unit="liters/step"),
+        make_stock_node(
+            "tw_reservoir",
+            "Reservoir water",
+            420,
+            150,
+            quantity=900,
+            unit="ML",
+            student_tooltip="Stock: raw water stored before treatment. Rain and river intake add water; evaporation and treatment transfer remove it.",
+            visual_theme="water",
+            fill_cap=1200,
+        ),
+        make_stock_node(
+            "tw_treated",
+            "Treated water tank",
+            420,
+            300,
+            quantity=180,
+            unit="ML",
+            student_tooltip="Stock: clean water ready for distribution.",
+            visual_theme="water",
+            fill_cap=350,
+        ),
+        make_stock_node(
+            "tw_home",
+            "Household water storage",
+            420,
+            450,
+            quantity=70,
+            unit="ML",
+            student_tooltip="Stock: water currently available to households.",
+            visual_theme="water",
+            fill_cap=180,
+        ),
+        make_flow_node(
+            "tw_rain",
+            "Rain and river intake",
+            130,
+            150,
+            bottleneck=42,
+            unit="ML/day",
+            student_tooltip="Inflow: water entering the reservoir.",
+        ),
+        make_flow_node(
+            "tw_evap",
+            "Evaporation and seepage",
+            700,
+            150,
+            bottleneck=9,
+            unit="ML/day",
+            student_tooltip="Outflow: water lost from the reservoir.",
+        ),
+        make_flow_node(
+            "tw_to_treatment",
+            "Pumped to treatment",
+            220,
+            235,
+            bottleneck=28,
+            unit="ML/day",
+            student_tooltip="Flow: water moves from the reservoir into the treatment tank.",
+        ),
+        make_flow_node(
+            "tw_treatment_loss",
+            "Treatment waste",
+            700,
+            300,
+            bottleneck=3,
+            unit="ML/day",
+            student_tooltip="Outflow: water lost during treatment.",
+        ),
+        make_flow_node(
+            "tw_delivery",
+            "Delivery to homes",
+            220,
+            385,
+            bottleneck=24,
+            unit="ML/day",
+            student_tooltip="Flow: treated water moves into household storage.",
+        ),
+        make_flow_node(
+            "tw_use",
+            "Showers, cooking, cleaning",
+            700,
+            450,
+            bottleneck=18,
+            unit="ML/day",
+            student_tooltip="Outflow: household water use.",
+        ),
+        make_flow_node(
+            "tw_leaks",
+            "Pipe leaks",
+            220,
+            535,
+            bottleneck=4,
+            unit="ML/day",
+            student_tooltip="Outflow: losses after water reaches the local network.",
+        ),
     ],
     edges=[
-        _inflow("edge_1",  "flow_1",  "stock_1"),
-        _outflow("edge_2", "stock_1", "flow_2"),
+        make_inflow_edge("tw_e1", "tw_rain", "tw_reservoir"),
+        make_outflow_edge("tw_e2", "tw_reservoir", "tw_evap"),
+        make_outflow_edge("tw_e3", "tw_reservoir", "tw_to_treatment"),
+        make_inflow_edge("tw_e4", "tw_to_treatment", "tw_treated"),
+        make_outflow_edge("tw_e5", "tw_treated", "tw_treatment_loss"),
+        make_outflow_edge("tw_e6", "tw_treated", "tw_delivery"),
+        make_inflow_edge("tw_e7", "tw_delivery", "tw_home"),
+        make_outflow_edge("tw_e8", "tw_home", "tw_use"),
+        make_outflow_edge("tw_e9", "tw_home", "tw_leaks"),
     ],
 )
 
-_STOCKS_FLOWS_CHALLENGE = EMPTY_GRAPH
+STOCKS_FLOWS_BANK = compose_graph(
+    nodes=[
+        make_stock_node(
+            "pb_wallet",
+            "Wallet / checking balance",
+            360,
+            250,
+            quantity=420,
+            unit="$",
+            student_tooltip="Stock: money available for everyday spending.",
+            visual_theme="money",
+            fill_cap=1200,
+        ),
+        make_stock_node(
+            "pb_savings",
+            "Savings jar",
+            610,
+            250,
+            quantity=260,
+            unit="$",
+            student_tooltip="Stock: money set aside for later.",
+            visual_theme="money",
+            fill_cap=900,
+        ),
+        make_flow_node(
+            "pb_income",
+            "Allowance / income",
+            90,
+            250,
+            bottleneck=55,
+            unit="$/week",
+            student_tooltip="Inflow: money arriving into the wallet.",
+        ),
+        make_flow_node(
+            "pb_spending",
+            "Food, transport, subscriptions",
+            360,
+            420,
+            bottleneck=38,
+            unit="$/week",
+            student_tooltip="Outflow: everyday spending from the wallet.",
+        ),
+        make_flow_node(
+            "pb_save",
+            "Move money to savings",
+            485,
+            160,
+            bottleneck=20,
+            unit="$/week",
+            student_tooltip="Flow: transfer money from wallet into savings.",
+        ),
+        make_flow_node(
+            "pb_withdraw",
+            "Emergency withdrawal",
+            485,
+            340,
+            bottleneck=8,
+            unit="$/week",
+            student_tooltip="Flow: money can move back from savings into the wallet.",
+        ),
+        make_flow_node(
+            "pb_big_purchase",
+            "Big purchase from savings",
+            780,
+            250,
+            bottleneck=12,
+            unit="$/week",
+            student_tooltip="Outflow: planned larger spending from savings.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("pb_e1", "pb_income", "pb_wallet"),
+        make_outflow_edge("pb_e2", "pb_wallet", "pb_spending"),
+        make_outflow_edge("pb_e3", "pb_wallet", "pb_save"),
+        make_inflow_edge("pb_e4", "pb_save", "pb_savings"),
+        make_outflow_edge("pb_e5", "pb_savings", "pb_withdraw"),
+        make_inflow_edge("pb_e6", "pb_withdraw", "pb_wallet"),
+        make_outflow_edge("pb_e7", "pb_savings", "pb_big_purchase"),
+    ],
+)
+
+STOCKS_FLOWS_BANK_ALMOST = deepcopy(STOCKS_FLOWS_BANK)
+STOCKS_FLOWS_BANK_ALMOST["edges"] = [
+    edge
+    for edge in STOCKS_FLOWS_BANK_ALMOST["edges"]
+    if edge["id"] not in {"pb_e4", "pb_e6"}
+]
+
+STOCKS_FLOWS_ENERGY = compose_graph(
+    nodes=[
+        make_stock_node(
+            "se",
+            "Energy in home (usable)",
+            400,
+            250,
+            quantity=48,
+            unit="kWh",
+            student_tooltip="Teaching stock: energy available for lights, heat, and appliances right now (aggregate).",
+        ),
+        make_flow_node(
+            "fe_in",
+            "Grid & solar supply",
+            120,
+            250,
+            bottleneck=9,
+            unit="kWh/h",
+            student_tooltip="Inflow: electricity and other energy delivered into the home.",
+        ),
+        make_flow_node(
+            "fe_out",
+            "Appliances & heat loss",
+            680,
+            250,
+            bottleneck=7,
+            unit="kWh/h",
+            student_tooltip="Outflow: energy consumed or lost each step.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("ee1", "fe_in", "se"),
+        make_outflow_edge("ee2", "se", "fe_out"),
+    ],
+)
+
+STOCKS_FLOWS_POPULATION = compose_graph(
+    nodes=[
+        make_stock_node(
+            "sp",
+            "Population",
+            400,
+            250,
+            quantity=1.2,
+            unit="M people",
+            student_tooltip="Stock: number of people in the region. Only births and deaths change it in this starter model.",
+        ),
+        make_flow_node(
+            "fp_b",
+            "Births (inflow)",
+            120,
+            250,
+            bottleneck=0.012,
+            unit="M/yr",
+            student_tooltip="Inflow: births per step (scaled). Increase or decrease to see population rise or fall.",
+        ),
+        make_flow_node(
+            "fp_d",
+            "Deaths (outflow)",
+            680,
+            250,
+            bottleneck=0.009,
+            unit="M/yr",
+            student_tooltip="Outflow: deaths per step (scaled).",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("ep1", "fp_b", "sp"),
+        make_outflow_edge("ep2", "sp", "fp_d"),
+    ],
+)
 
 LESSON_STOCKS_FLOWS = {
     "title": "Stocks and Flows",
     "order_index": 0,
-    "content_markdown": _STOCKS_FLOWS_CONTENT,
+    "content_markdown": STOCKS_FLOWS_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Water Tank",
+            "title": "Task 1: Town water supply",
             "description": (
-                "A water tank receives 10 liters per step from a tap and loses 5 liters "
-                "per step through a drain. Run the simulation for 50 steps and observe how "
-                "the stock level changes over time. Notice that the net inflow of 5 units "
-                "per step causes the tank to fill linearly."
+                "Open the finished town water graph. Trace rain and intake into the reservoir, pumping into treatment, "
+                "delivery to households, and losses through use, evaporation, and leaks. Use only stock and flow language."
             ),
-            "graph": _STOCKS_FLOWS_DEMO,
+            "graph": STOCKS_FLOWS_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Bank Account",
+            "title": "Task 2: Personal budget transfers",
             "description": (
-                "Build a bank account model from scratch. The account starts with 1,000 "
-                "units. Add two flows: an income inflow of 50 units/step and an expenses "
-                "outflow of 30 units/step. Run the simulation for 50 steps and observe the "
-                "balance over time."
+                "Finish the nearly complete budget graph. Wallet and savings are already placed; connect the missing "
+                "transfer ends so money can move into savings and back to the wallet, then run the simulation."
             ),
-            "graph": _STOCKS_FLOWS_CHALLENGE,
+            "graph": STOCKS_FLOWS_BANK_ALMOST,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Household energy",
+            "description": (
+                "Run the household energy graph using only stocks and flows. Identify stored energy, the grid and solar "
+                "supply inflow, and the appliance and heat loss outflow."
+            ),
+            "graph": STOCKS_FLOWS_ENERGY,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Population births and deaths",
+            "description": (
+                "Run the one-stock population graph. Births are the inflow and deaths are the outflow. Explain when the "
+                "population rises, falls, or stays close to steady."
+            ),
+            "graph": STOCKS_FLOWS_POPULATION,
+            "order_index": 3,
         },
     ],
 }
 
 
-# ---------------------------------------------------------------------------
-# Lesson 2: Balancing Feedback Loops
-# ---------------------------------------------------------------------------
-#
-# Graph layout (thermostat):
-#
-#   constant_1 "Desired Temperature" (x=380, y=60)   ← goal node
-#        |
-#   variable_1 "Discrepancy"         (x=380, y=165)  ← discrepancy node
-#        |
-#   variable_2 "Corrective Action"   (x=80,  y=165)  ← corrective node
-#        |
-#   flow_1     "Heater"              (x=80,  y=250)  → inflow → stock_1
-#   stock_1    "Room Temperature"    (x=380, y=250)
-#
-# Expressions (match labStore.createBalancingFeedbackLoop output):
-#   discrepancy  = "(stock_1 < constant_1 ? (constant_1 - stock_1) : 0)"
-#   corrective   = "(max(0, (variable_1))) / (3)"
-#   flow         = "max(0, (0) + (variable_2))"
+# ===========================================================================
+# Lesson: Constants and Variables
+# ===========================================================================
 
-_BALANCING_LOOPS_CONTENT = """\
-## Balancing Feedback Loops: Systems That Seek Goals
+CONSTANTS_VARIABLES_CONTENT = """\
 
-After stocks and flows, Meadows introduces the first type of feedback: the \
-**balancing loop**. These loops are everywhere in natural, social, and \
-technical systems.
+After this lesson you will be able to clearly tell a **stock** and a **flow** apart from a **constant** (parameter) and an **auxiliary variable**.
 
-A balancing loop acts like a **thermostat**: it detects the gap between *where \
-a stock is* and *where it should be*, then takes corrective action to close \
-that gap.
+Only **stocks** accumulate history. A **flow** is a rate that changes a stock. A **constant** (parameter) is a number you can adjust like a dial, for example an interest rate, a price, or a goal. An **auxiliary variable** is something you calculate from other parts of the model so the diagram stays clean and readable.
 
-### The Thermostat Structure
+### The four building blocks
 
-Every balancing loop has four parts:
-1. A **stock** — the actual state (e.g. room temperature)
-2. A **goal** — the desired state (e.g. 20 °C)
-3. A **discrepancy** — the gap between actual and desired
-4. A **corrective action** — a flow that responds to the gap
+- **Stocks** are the “memory” of the system, measured in units at a point in time (e.g. balance in €).
+- **Flows** are rates that add to or subtract from a stock, measured per time unit (e.g. € per year).
+- **Constants** are fixed numbers or policy levers you can change (they have no memory).
+- **Variables (auxiliary)** are intermediate calculations that make the logic easier to see and understand.
 
-When the stock is below the goal, the discrepancy is positive, which triggers \
-an increasing corrective flow. As the stock approaches the goal, the discrepancy \
-shrinks, and the corrective action fades. The system naturally **settles at \
-the goal**.
+### How this works in the lab
 
-### Key Properties
+In the FlowSpace editor:
+- Use **stock** nodes for anything that accumulates,
+- Use **flow** nodes for rates that actually change a stock,
+- Use **constant** nodes for parameters and policy dials,
+- Use **variable** nodes for named calculations (e.g. “interest this year”).
 
-- Balancing loops are **stabilising** — they resist change.
-- The adjustment time controls how quickly the gap is closed: a short \
-  adjustment time = rapid correction; a long one = sluggish response.
-- Push a thermostat-controlled room to a higher temperature and the loop \
-  pulls it back.
+**Pro tip:** When a flow depends on a stock through a formula, route it through a **variable** node. This keeps your diagram readable.
 
-> **Key insight:** Balancing loops are goal-seeking. Strength of correction \
-depends on the size of the gap and the adjustment time.
+> **Key idea:** If you are not integrating it over time, it is **not** a stock.  
+> If it is not a rate that directly changes a stock, it is **not** a flow.  
+> Everything else is either a constant or an auxiliary variable.
 
-In the first task, watch a room temperature system find its equilibrium. In \
-the second task, build a similar controller for a reservoir.\
+### In the Lab
+
+Each task asks you to separate stocks, flows, constants, and variables in a different context.
+
+
+- **Task 1: Bakery production parameters**  
+  Use the finished bakery graph to identify oven count and loaves per oven as constants, baking rate as a variable, and bread inventory as a stock.
+- **Task 2: Cafeteria lunch prep**  
+  Finish the cafeteria model by adding the missing serving formula and information arrow.
+- **Task 3: Pasture carrying capacity**  
+  Build a pasture model with grass as a stock, carrying capacity as a constant, and headroom as a variable.
+- **Task 4: Workload and wellbeing**  
+  Build a workload and wellbeing model with constants, a strain index variable, and a wellbeing stock.
 """
 
-_BALANCING_LOOP_DEMO = _graph(
+CONSTANTS_VARIABLES_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Room Temperature", 380, 250, quantity=10, unit="°C"),
-        _flow(
-            "flow_1",
-            "Heater",
+        make_stock_node(
+            "bakery_stock",
+            "Bread inventory",
+            400,
+            240,
+            quantity=64,
+            unit="loaves",
+            student_tooltip="Stock: finished bread ready for sale.",
+            fill_cap=160,
+        ),
+        make_flow_node(
+            "bakery_in",
+            "Baking output",
+            100,
+            240,
+            bottleneck=0,
+            expression="max(0, (0) + (bakery_rate))",
+            base_flow_expression="0",
+            unit="loaves/step",
+            student_tooltip="Flow: finished bread added each step. The rate comes from the baking-rate variable.",
+        ),
+        make_constant_node(
+            "bakery_ovens",
+            "Ovens running",
+            260,
             80,
-            250,
+            quantity=2,
+            unit="ovens",
+            color=C_AUX,
+            student_tooltip="Constant: number of ovens available in this scenario.",
+        ),
+        make_constant_node(
+            "bakery_batch",
+            "Loaves per oven",
+            540,
+            80,
+            quantity=18,
+            unit="loaves/step",
+            color=C_AUX,
+            student_tooltip="Constant: output per oven per step.",
+        ),
+        make_variable_node(
+            "bakery_rate",
+            "Baking rate = ovens × loaves/oven",
+            390,
+            160,
+            expression="(bakery_ovens) * (bakery_batch)",
+            unit="loaves/step",
+            color=C_AUX,
+            student_tooltip="Variable: named calculation from constants, used by the baking output flow.",
+        ),
+        make_flow_node(
+            "bakery_out",
+            "Customer purchases",
+            700,
+            240,
+            bottleneck=28,
+            unit="loaves/step",
+            student_tooltip="Outflow: bread sold each step.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("edge_1", "bakery_in", "bakery_stock"),
+        make_outflow_edge("edge_2", "bakery_stock", "bakery_out"),
+        make_feedback_edge("edge_3", "bakery_ovens", "bakery_rate"),
+        make_feedback_edge("edge_4", "bakery_batch", "bakery_rate"),
+        make_feedback_edge("edge_5", "bakery_rate", "bakery_in", op="add"),
+    ],
+)
+
+CONSTANTS_ROOM_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "crm_s",
+            "Room temperature",
+            400,
+            260,
+            quantity=10,
+            unit="°C",
+            student_tooltip="Stock: current indoor temperature: what the thermostat is trying to steer.",
+        ),
+        make_flow_node(
+            "crm_fh",
+            "Heating",
+            90,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (crm_vc))",
+            base_flow_expression="0",
+            unit="°C/step",
+            student_tooltip="Inflow of warmth when the room is colder than the purple goal.",
+        ),
+        make_flow_node(
+            "crm_fc",
+            "Cooling (AC)",
+            710,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (crm_cc))",
+            base_flow_expression="0",
+            unit="°C/step",
+            student_tooltip="Outflow of heat when the room is warmer than the goal.",
+        ),
+        make_constant_node(
+            "crm_goal",
+            "Desired temperature (constant goal)",
+            400,
+            70,
+            quantity=20,
+            loop_id="crm_l1",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="°C",
+            color=C_AUX,
+            student_tooltip="Constant goal: the thermostat setpoint: a parameter, not a stock.",
+        ),
+        make_variable_node(
+            "crm_dc",
+            "Gap (too cold)",
+            400,
+            170,
+            expression="(crm_s < crm_goal ? (crm_goal - crm_s) : 0)",
+            loop_id="crm_l1",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Auxiliary: how far below the goal the room is.",
+        ),
+        make_variable_node(
+            "crm_vc",
+            "Heating correction",
+            90,
+            170,
+            expression="(max(0, (crm_dc))) / (3)",
+            loop_id="crm_l1",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective heating strength from the cold gap.",
+        ),
+        make_variable_node(
+            "crm_dh",
+            "Gap (too hot)",
+            400,
+            360,
+            expression="(crm_s > crm_goal ? (crm_s - crm_goal) : 0)",
+            loop_id="crm_l2",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "crm_cc",
+            "Cooling correction",
+            620,
+            360,
+            expression="(max(0, (crm_dh))) / (3)",
+            loop_id="crm_l2",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("crm_e1", "crm_fh", "crm_s"),
+        make_outflow_edge("crm_e6", "crm_s", "crm_fc"),
+        make_feedback_edge("crm_e2", "crm_goal", "crm_dc", fb_type="balancing"),
+        make_feedback_edge("crm_e3", "crm_s", "crm_dc", fb_type="balancing"),
+        make_feedback_edge("crm_e4", "crm_dc", "crm_vc", fb_type="balancing"),
+        make_feedback_edge("crm_e5", "crm_vc", "crm_fh", op="add", fb_type="balancing"),
+        make_feedback_edge("crm_e7", "crm_goal", "crm_dh", fb_type="balancing"),
+        make_feedback_edge("crm_e8", "crm_s", "crm_dh", fb_type="balancing"),
+        make_feedback_edge("crm_e9", "crm_dh", "crm_cc", fb_type="balancing"),
+        make_feedback_edge("crm_e10", "crm_cc", "crm_fc", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "crm_l1",
+            "crm_s",
+            "crm_goal",
+            "crm_dc",
+            "crm_vc",
+            "crm_fh",
+            ["crm_e2", "crm_e3", "crm_e4", "crm_e5"],
+            boundary_type="lower",
+            goal_value=20,
+            adjustment_time=3,
+        ),
+        make_balancing_loop(
+            "crm_l2",
+            "crm_s",
+            "crm_goal",
+            "crm_dh",
+            "crm_cc",
+            "crm_fc",
+            ["crm_e7", "crm_e8", "crm_e9", "crm_e10"],
+            boundary_type="upper",
+            goal_value=20,
+            adjustment_time=3,
+        ),
+    ],
+)
+
+CONSTANTS_PASTURE_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "cp_grass",
+            "Grass on pasture",
+            400,
+            260,
+            quantity=320,
+            unit="index",
+            student_tooltip="Stock: usable grass: the commons everyone shares in this teaching story.",
+            visual_theme="grass",
+            fill_cap=500,
+        ),
+        make_constant_node(
+            "cp_K",
+            "Carrying capacity (constant)",
+            400,
+            80,
+            quantity=420,
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Purple constant: ecological ceiling: not a flow, a parameter you can change to test ideas.",
+        ),
+        make_flow_node(
+            "cp_in",
+            "Regrowth (rain & rest)",
+            120,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (cp_rg))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: grass returning when there is headroom below carrying capacity.",
+        ),
+        make_flow_node(
+            "cp_out",
+            "Grazing pressure",
+            680,
+            260,
+            bottleneck=22,
+            unit="index/step",
+            student_tooltip="Outflow: animals eating grass each step.",
+        ),
+        make_variable_node(
+            "cp_rg",
+            "Headroom regrowth",
+            260,
+            170,
+            expression="(0.06) * max(0, (cp_K) - (cp_grass))",
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Variable: regrowth scales with how far grass is below carrying capacity.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("cp_e1", "cp_in", "cp_grass"),
+        make_outflow_edge("cp_e2", "cp_grass", "cp_out"),
+        make_feedback_edge("cp_e3", "cp_K", "cp_rg"),
+        make_feedback_edge("cp_e4", "cp_grass", "cp_rg"),
+        make_feedback_edge("cp_e5", "cp_rg", "cp_in", op="add"),
+    ],
+)
+
+CONSTANTS_QUAL_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "cq_wb",
+            "Team wellbeing",
+            400,
+            280,
+            quantity=72,
+            unit="index",
+            student_tooltip="Stock: collective wellbeing: drained by perceived overload in this toy model.",
+        ),
+        make_constant_node(
+            "cq_load",
+            "Workload (1=low, 2=med, 3=high)",
+            220,
+            100,
+            quantity=2,
+            unit="ordinal",
+            color=C_AUX,
+            student_tooltip="Purple constant: qualitative load encoded as 1/2/3: edit to explore scenarios.",
+        ),
+        make_constant_node(
+            "cq_buf",
+            "Support buffer (1 to 3)",
+            580,
+            100,
+            quantity=2,
+            unit="lvl",
+            color=C_AUX,
+            student_tooltip="Constant: support capacity; higher values shrink the strain index.",
+        ),
+        make_variable_node(
+            "cq_risk",
+            "Strain index = load ÷ support",
+            400,
+            190,
+            expression="(cq_load) / max(0.5, (cq_buf))",
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Variable: named calculation from constants: not a stock, not a raw parameter.",
+        ),
+        make_flow_node(
+            "cq_out",
+            "Burnout drain",
+            400,
+            400,
+            bottleneck=0,
+            expression="max(0, (0) + (cq_risk)) * 0.35",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Outflow: wellbeing lost per step; driven by the strain variable.",
+        ),
+    ],
+    edges=[
+        make_outflow_edge("cq_e1", "cq_wb", "cq_out"),
+        make_feedback_edge("cq_e2", "cq_load", "cq_risk"),
+        make_feedback_edge("cq_e3", "cq_buf", "cq_risk"),
+        make_feedback_edge("cq_e6", "cq_risk", "cq_out", op="add"),
+    ],
+)
+
+CONSTANTS_CAFE_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "cafe_todo",
+            "Almost done: meal stock, cooking capacity, expected demand, and serving pressure are placed. Add the missing serving formula and reconnect serving pressure to the serving flow.",
+            20,
+            20,
+        ),
+        make_stock_node(
+            "cafe_trays",
+            "Prepared meal trays",
+            420,
+            260,
+            quantity=85,
+            unit="trays",
+            student_tooltip="Stock: meals ready before lunch service.",
+        ),
+        make_flow_node(
+            "cafe_cook",
+            "Kitchen cooking",
+            120,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (cafe_capacity))",
+            base_flow_expression="0",
+            unit="trays/step",
+            student_tooltip="Inflow: cooking adds prepared meals. The rate comes from a constant.",
+        ),
+        make_flow_node(
+            "cafe_serve",
+            "Lunch service",
+            700,
+            260,
+            bottleneck=0,
+            expression="",
+            base_flow_expression="0",
+            unit="trays/step",
+            student_tooltip="Finish this flow: it should use the serving pressure variable.",
+        ),
+        make_constant_node(
+            "cafe_capacity",
+            "Cooking capacity",
+            120,
+            90,
+            quantity=18,
+            unit="trays/step",
+            student_tooltip="Constant: kitchen output per step.",
+        ),
+        make_constant_node(
+            "cafe_expected",
+            "Expected student demand",
+            620,
+            90,
+            quantity=22,
+            unit="trays/step",
+            student_tooltip="Constant: expected lunch demand for the scenario.",
+        ),
+        make_variable_node(
+            "cafe_pressure",
+            "Serving pressure",
+            560,
+            170,
+            expression="min((cafe_expected), (cafe_trays))",
+            unit="trays/step",
+            student_tooltip="Variable: named calculation that limits serving by demand and available trays.",
+        ),
+    ],
+    edges=[
+        make_feedback_edge("cafe_e1", "cafe_capacity", "cafe_cook", op="add"),
+        make_inflow_edge("cafe_e2", "cafe_cook", "cafe_trays"),
+        make_outflow_edge("cafe_e3", "cafe_trays", "cafe_serve"),
+        make_feedback_edge("cafe_e4", "cafe_expected", "cafe_pressure"),
+        make_feedback_edge("cafe_e5", "cafe_trays", "cafe_pressure"),
+    ],
+)
+
+LESSON_CONSTANTS_AND_VARIABLES = {
+    "title": "Constants and Variables",
+    "order_index": 1,
+    "content_markdown": CONSTANTS_VARIABLES_CONTENT,
+    "tasks": [
+        {
+            "title": "Task 1: Bakery production",
+            "description": (
+                "In the bakery graph, identify the **Ovens running** and **Loaves per oven** constants, then explain "
+                "how the **Baking rate** variable drives the inventory inflow."
+            ),
+            "graph": CONSTANTS_VARIABLES_DEMO,
+            "order_index": 0,
+        },
+        {
+            "title": "Task 2: Cafeteria lunch prep",
+            "description": (
+                "Finish the cafeteria model. The stock, constants, and serving-pressure variable are placed; add the "
+                "missing serving formula and reconnect the missing information arrow."
+            ),
+            "graph": CONSTANTS_CAFE_ALMOST,
+            "order_index": 1,
+        },
+        {
+            "title": "Task 3: Carrying capacity on a pasture",
+            "description": (
+                "In the shared pasture graph, identify **carrying capacity** as a constant. "
+                "Explain in your own words how it interacts with the grass stock, regrowth, and grazing."
+            ),
+            "graph": CONSTANTS_PASTURE_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Qualitative levels vs variables",
+            "description": (
+                "In the qualitative model, explain the difference between the **workload ordinal constant** "
+                "(1/2/3), the **strain index** variable, and the **wellbeing** stock. Which one remembers history?"
+            ),
+            "graph": CONSTANTS_QUAL_DEMO,
+            "order_index": 3,
+        },
+    ],
+}
+
+
+# ===========================================================================
+# Lesson 2: Balancing Feedback Loops
+# ===========================================================================
+
+BALANCING_LOOPS_CONTENT = """\
+
+**Learning objective:** You can recognize a balancing (goal seeking) feedback loop, explain how it works, and understand why it brings stability to systems.
+
+Balancing feedback loops are also called negative feedback loops or stabilizing loops. They are one of the most common and important structures in natural, social, and technical systems.
+
+### What Is a Balancing Loop?
+
+A balancing loop is a **goal seeking** structure. It constantly compares the current state of a **stock** with a **desired goal** and then acts to close the gap between them.
+
+It works like a thermostat:
+- When the stock is **below** the goal, the loop **increases** the inflow (or decreases the outflow).
+- When the stock is **above** the goal, the loop **decreases** the inflow (or increases the outflow).
+- As the gap shrinks, the corrective action automatically weakens.
+
+The system gradually approaches the goal and settles near it, this is called **dynamic equilibrium**.
+
+### The Four Core Elements of Every Balancing Loop
+
+1. **Stock**, the actual state of the system (e.g. room temperature, water level in a reservoir, bank balance).
+2. **Goal**, the desired state (e.g. 20 °C, target inventory level).
+3. **Discrepancy / Gap**, the difference between the actual stock and the goal.
+4. **Corrective Action**, a flow that reduces the gap (heating, ordering more goods, saving more money).
+
+### Classic Example: The Thermostat
+
+- **Stock**: Room temperature
+- **Goal**: Thermostat setting (e.g. 20 °C)
+- **Discrepancy**: Goal temperature minus actual temperature
+- **Corrective action**: Heat from the furnace (inflow)
+
+The bigger the gap, the stronger the heating. As the room warms up, the furnace gradually turns down. The loop self corrects.
+
+### Key Properties of Balancing Loops
+
+- They are **stabilizing**, they resist change and try to keep the stock steady.
+- They oppose whatever direction you push the system.
+- The **strength** of the loop and the **adjustment time** (how quickly it reacts) determine how well it works.
+- **Delays** in balancing loops often cause oscillations or overshoot (the system swings past the goal and back again).
+
+> **Key insight:**  
+> “Balancing feedback loops are goal seeking or stability seeking. Each tries to keep a stock at a given value or within a range of values. A balancing feedback loop opposes whatever direction of change is imposed on the system.”
+
+### Why This Matters
+
+Balancing loops are the main reason many systems are stable. But if the goal is wrong, the loop is too weak, or there are long delays, they can create problems (e.g. constant oscillations, policy resistance, or failure to reach the real target).
+
+### In the Lab
+
+The lab moves from a finished reference graph to guided completion and then blank canvas modeling.
+
+
+- **Task 1: Thermostat stability**  
+  Use the finished thermostat graph to trace goal, gap, corrective action, heating, and cooling.
+- **Task 2: Student self evaluation**  
+  Finish the student performance loop so study effort moves performance toward the target grade.
+- **Task 3: Shop inventory**  
+  Build a shop inventory balancing loop from a blank canvas.
+- **Task 4: Body temperature**  
+  Build body temperature regulation with heat generation and heat loss around a setpoint.
+
+Mastering balancing loops is essential, almost every stable system you encounter (body temperature, inventory, budgets, ecosystems) relies on them.
+"""
+
+BALANCING_LOOP_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "stock_1",
+            "Room Temperature",
+            400,
+            260,
+            quantity=10,
+            unit="°C",
+            student_tooltip="Stock: how warm the room is right now. Too cold → heating inflow; too hot → cooling outflow.",
+        ),
+        make_flow_node(
+            "flow_1",
+            "Heating (inflow of warmth)",
+            90,
+            260,
             bottleneck=0,
             expression="max(0, (0) + (variable_2))",
             base_flow_expression="0",
             unit="°C/step",
+            student_tooltip="Inflow (green): warmth added per step when the room is below the goal.",
         ),
-        _constant(
+        make_flow_node(
+            "flow_2",
+            "Cooling (AC outflow)",
+            710,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (variable_4))",
+            base_flow_expression="0",
+            unit="°C/step",
+            student_tooltip="Outflow (red): heat removed per step when the room is above the goal.",
+        ),
+        make_constant_node(
             "constant_1",
-            "Desired Temperature",
-            380,
-            60,
+            "Desired Temperature (goal)",
+            400,
+            70,
             quantity=20,
             loop_id="loop_1",
             loop_role="goal",
             fb_type="balancing",
             unit="°C",
+            color=C_AUX,
+            student_tooltip="Goal (purple): thermostat setpoint. Use the lesson slider or edit the value: the room should move toward it.",
         ),
-        _variable(
+        make_variable_node(
             "variable_1",
-            "Discrepancy",
-            380,
-            165,
+            "Gap (too cold)",
+            400,
+            170,
             expression="(stock_1 < constant_1 ? (constant_1 - stock_1) : 0)",
             loop_id="loop_1",
             loop_role="discrepancy",
             fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Gap when the room is colder than the goal. Drives heating.",
         ),
-        _variable(
+        make_variable_node(
             "variable_2",
-            "Corrective Action",
-            80,
-            165,
+            "Corrective heating rate",
+            90,
+            170,
             expression="(max(0, (variable_1))) / (3)",
             loop_id="loop_1",
             loop_role="correctiveAction",
             fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective action: stronger heating when the cold gap is large.",
+        ),
+        make_variable_node(
+            "variable_3",
+            "Gap (too hot)",
+            400,
+            360,
+            expression="(stock_1 > constant_1 ? (stock_1 - constant_1) : 0)",
+            loop_id="loop_2",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Gap when the room is warmer than the goal. Drives cooling.",
+        ),
+        make_variable_node(
+            "variable_4",
+            "Corrective cooling rate",
+            620,
+            360,
+            expression="(max(0, (variable_3))) / (3)",
+            loop_id="loop_2",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective action: stronger cooling when the hot gap is large.",
         ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1", "stock_1"),
-        _fb_edge("edge_2", "constant_1", "variable_1"),
-        _fb_edge("edge_3", "stock_1",    "variable_1"),
-        _fb_edge("edge_4", "variable_1", "variable_2"),
-        _fb_edge("edge_5", "variable_2", "flow_1", op="add"),
+        make_inflow_edge("edge_1", "flow_1", "stock_1"),
+        make_outflow_edge("edge_6", "stock_1", "flow_2"),
+        make_feedback_edge("edge_2", "constant_1", "variable_1", fb_type="balancing"),
+        make_feedback_edge("edge_3", "stock_1", "variable_1", fb_type="balancing"),
+        make_feedback_edge("edge_4", "variable_1", "variable_2", fb_type="balancing"),
+        make_feedback_edge("edge_5", "variable_2", "flow_1", op="add", fb_type="balancing"),
+        make_feedback_edge("edge_7", "constant_1", "variable_3", fb_type="balancing"),
+        make_feedback_edge("edge_8", "stock_1", "variable_3", fb_type="balancing"),
+        make_feedback_edge("edge_9", "variable_3", "variable_4", fb_type="balancing"),
+        make_feedback_edge("edge_10", "variable_4", "flow_2", op="add", fb_type="balancing"),
     ],
     feedback_loops=[
-        _balancing_loop(
+        make_balancing_loop(
             "loop_1",
             "stock_1",
             "constant_1",
@@ -522,146 +1713,515 @@ _BALANCING_LOOP_DEMO = _graph(
             boundary_type="lower",
             goal_value=20,
             adjustment_time=3,
-        )
+        ),
+        make_balancing_loop(
+            "loop_2",
+            "stock_1",
+            "constant_1",
+            "variable_3",
+            "variable_4",
+            "flow_2",
+            ["edge_7", "edge_8", "edge_9", "edge_10"],
+            boundary_type="upper",
+            goal_value=20,
+            adjustment_time=3,
+        ),
     ],
 )
 
-_BALANCING_LOOP_CHALLENGE = _graph(
+BAL_STUDENT_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Reservoir Level", 380, 250, quantity=10, unit="units"),
-        _flow("flow_1",   "Water Pump",       80,  250, bottleneck=0, unit="units/step"),
+        make_stock_node(
+            "bs_s",
+            "Course performance (%)",
+            400,
+            260,
+            quantity=58,
+            unit="%",
+            student_tooltip="Stock: measured performance: the loop tries to pull it toward the goal.",
+        ),
+        make_flow_node(
+            "bs_fin",
+            "Study effort (gain)",
+            90,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (bs_c1))",
+            base_flow_expression="0",
+            unit="%/wk",
+            student_tooltip="Inflow: learning gain from extra effort when you are below target.",
+        ),
+        make_flow_node(
+            "bs_fout",
+            "Slippage / forgetting",
+            710,
+            260,
+            bottleneck=4,
+            unit="%/wk",
+            student_tooltip="Outflow: drift from distractions: keeps the story realistic.",
+        ),
+        make_constant_node(
+            "bs_g",
+            "Target grade (goal)",
+            400,
+            70,
+            quantity=78,
+            loop_id="bs_l1",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="%",
+            color=C_AUX,
+            student_tooltip="Purple goal: the performance you are aiming for.",
+        ),
+        make_variable_node(
+            "bs_d",
+            "Gap below goal",
+            400,
+            170,
+            expression="(bs_s < bs_g ? (bs_g - bs_s) : 0)",
+            loop_id="bs_l1",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "bs_c1",
+            "Extra study response",
+            90,
+            170,
+            expression="(max(0, (bs_d))) / (4)",
+            loop_id="bs_l1",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective: bigger study push when the gap is large.",
+        ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1", "stock_1"),
+        make_inflow_edge("bs_e1", "bs_fin", "bs_s"),
+        make_outflow_edge("bs_e2", "bs_s", "bs_fout"),
+        make_feedback_edge("bs_e3", "bs_g", "bs_d", fb_type="balancing"),
+        make_feedback_edge("bs_e4", "bs_s", "bs_d", fb_type="balancing"),
+        make_feedback_edge("bs_e5", "bs_d", "bs_c1", fb_type="balancing"),
+        make_feedback_edge("bs_e6", "bs_c1", "bs_fin", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "bs_l1",
+            "bs_s",
+            "bs_g",
+            "bs_d",
+            "bs_c1",
+            "bs_fin",
+            ["bs_e3", "bs_e4", "bs_e5", "bs_e6"],
+            boundary_type="lower",
+            goal_value=78,
+            adjustment_time=4,
+        ),
+    ],
+)
+
+BAL_SHOP_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "sh_s",
+            "Units on shelf",
+            400,
+            260,
+            quantity=42,
+            unit="boxes",
+            student_tooltip="Stock: inventory the shopkeeper watches.",
+        ),
+        make_flow_node(
+            "sh_in",
+            "Reorder arrivals",
+            90,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (sh_c))",
+            base_flow_expression="0",
+            unit="boxes/wk",
+            student_tooltip="Inflow: deliveries triggered by the gap below target stock.",
+        ),
+        make_flow_node(
+            "sh_out",
+            "Customer purchases",
+            710,
+            260,
+            bottleneck=11,
+            unit="boxes/wk",
+            student_tooltip="Outflow: sales steadily drain the shelf.",
+        ),
+        make_constant_node(
+            "sh_g",
+            "Target shelf stock",
+            400,
+            70,
+            quantity=55,
+            loop_id="sh_l1",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="boxes",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "sh_d",
+            "Stockout gap",
+            400,
+            170,
+            expression="(sh_s < sh_g ? (sh_g - sh_s) : 0)",
+            loop_id="sh_l1",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "sh_c",
+            "Order correction",
+            90,
+            170,
+            expression="(max(0, (sh_d))) / (3)",
+            loop_id="sh_l1",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("sh_e1", "sh_in", "sh_s"),
+        make_outflow_edge("sh_e2", "sh_s", "sh_out"),
+        make_feedback_edge("sh_e3", "sh_g", "sh_d", fb_type="balancing"),
+        make_feedback_edge("sh_e4", "sh_s", "sh_d", fb_type="balancing"),
+        make_feedback_edge("sh_e5", "sh_d", "sh_c", fb_type="balancing"),
+        make_feedback_edge("sh_e6", "sh_c", "sh_in", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "sh_l1",
+            "sh_s",
+            "sh_g",
+            "sh_d",
+            "sh_c",
+            "sh_in",
+            ["sh_e3", "sh_e4", "sh_e5", "sh_e6"],
+            boundary_type="lower",
+            goal_value=55,
+            adjustment_time=3,
+        ),
+    ],
+)
+
+BAL_BODY_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "bd_s",
+            "Core body temperature",
+            400,
+            260,
+            quantity=36.9,
+            unit="°C",
+            student_tooltip="Stock: deep core temperature: tightly regulated.",
+        ),
+        make_flow_node(
+            "bd_in",
+            "Heat generation (metabolism)",
+            90,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (bd_c1))",
+            base_flow_expression="0",
+            unit="°C/h",
+            student_tooltip="Inflow: metabolic heat when you are cooler than the setpoint.",
+        ),
+        make_flow_node(
+            "bd_out",
+            "Heat loss (sweat & environment)",
+            710,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (bd_c2))",
+            base_flow_expression="0",
+            unit="°C/h",
+            student_tooltip="Outflow: cooling when you run warmer than the setpoint.",
+        ),
+        make_constant_node(
+            "bd_g",
+            "Setpoint (~37 °C)",
+            400,
+            70,
+            quantity=37.0,
+            loop_id="bd_l1",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="°C",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "bd_d1",
+            "Too cold gap",
+            400,
+            170,
+            expression="(bd_s < bd_g ? (bd_g - bd_s) : 0)",
+            loop_id="bd_l1",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "bd_c1",
+            "Warm-up response",
+            90,
+            170,
+            expression="(max(0, (bd_d1))) / (2.5)",
+            loop_id="bd_l1",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "bd_d2",
+            "Too hot gap",
+            400,
+            360,
+            expression="(bd_s > bd_g ? (bd_s - bd_g) : 0)",
+            loop_id="bd_l2",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "bd_c2",
+            "Cool-down response",
+            620,
+            360,
+            expression="(max(0, (bd_d2))) / (2.5)",
+            loop_id="bd_l2",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("bd_e1", "bd_in", "bd_s"),
+        make_outflow_edge("bd_e6", "bd_s", "bd_out"),
+        make_feedback_edge("bd_e2", "bd_g", "bd_d1", fb_type="balancing"),
+        make_feedback_edge("bd_e3", "bd_s", "bd_d1", fb_type="balancing"),
+        make_feedback_edge("bd_e4", "bd_d1", "bd_c1", fb_type="balancing"),
+        make_feedback_edge("bd_e5", "bd_c1", "bd_in", op="add", fb_type="balancing"),
+        make_feedback_edge("bd_e7", "bd_g", "bd_d2", fb_type="balancing"),
+        make_feedback_edge("bd_e8", "bd_s", "bd_d2", fb_type="balancing"),
+        make_feedback_edge("bd_e9", "bd_d2", "bd_c2", fb_type="balancing"),
+        make_feedback_edge("bd_e10", "bd_c2", "bd_out", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "bd_l1",
+            "bd_s",
+            "bd_g",
+            "bd_d1",
+            "bd_c1",
+            "bd_in",
+            ["bd_e2", "bd_e3", "bd_e4", "bd_e5"],
+            boundary_type="lower",
+            goal_value=37,
+            adjustment_time=2.5,
+        ),
+        make_balancing_loop(
+            "bd_l2",
+            "bd_s",
+            "bd_g",
+            "bd_d2",
+            "bd_c2",
+            "bd_out",
+            ["bd_e7", "bd_e8", "bd_e9", "bd_e10"],
+            boundary_type="upper",
+            goal_value=37,
+            adjustment_time=2.5,
+        ),
     ],
 )
 
 LESSON_BALANCING_LOOPS = {
-    "title": "Balancing Feedback Loops",
-    "order_index": 1,
-    "content_markdown": _BALANCING_LOOPS_CONTENT,
+    "title": "Balancing Loop",
+    "order_index": 0,
+    "content_markdown": BALANCING_LOOPS_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Thermostat",
+            "title": "Task 1: Thermostat stability",
             "description": (
-                "Room temperature starts at 10 °C. The desired temperature is 20 °C. "
-                "A balancing feedback loop detects the gap and activates a heater with "
-                "adjustment time = 3 steps. Run the simulation and watch the temperature "
-                "converge to the goal."
+                "Run the thermostat model: keep **room temperature** near a **setpoint** using heating "
+                "inflow and cooling outflow. Change the goal and describe how the stock follows."
             ),
-            "graph": _BALANCING_LOOP_DEMO,
+            "graph": BALANCING_LOOP_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Reservoir Controller",
+            "title": "Task 2: Student self-evaluation",
             "description": (
-                "A reservoir starts at 10 units. Your goal: maintain a level of 50 units. "
-                "Using the stock and flow provided, add a balancing feedback loop targeting "
-                "50 units with an adjustment time of your choice. Run the simulation and "
-                "confirm the level stabilises at 50."
+                "Run the student loop: **low performance** should increase **study effort** (inflow) "
+                "so **performance** moves toward the purple goal. Explain the gap variable in words."
             ),
-            "graph": _BALANCING_LOOP_CHALLENGE,
+            "graph": BAL_STUDENT_DEMO,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Shop inventory",
+            "description": (
+                "Run the shop model: **inventory** should track a **target** via reorder inflow while "
+                "sales drain the shelf. How does the balancing loop fight stockouts?"
+            ),
+            "graph": BAL_SHOP_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Body temperature",
+            "description": (
+                "Run the core **body temperature** regulation model: metabolic heat when too cold, heat loss "
+                "when too hot, around a narrow setpoint."
+            ),
+            "graph": BAL_BODY_DEMO,
+            "order_index": 3,
         },
     ],
 }
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Lesson 3: Reinforcing Feedback Loops
-# ---------------------------------------------------------------------------
-#
-# Graph layout (compound interest):
-#
-#   flow_1    "Interest Earned"   (x=80,  y=220) → inflow → stock_1
-#   stock_1   "Savings Account"   (x=380, y=220)
-#        ↘ (feedback)
-#   variable_1 "Growth Multiplier" (x=230, y=90)
-#        ↘ (feedback)
-#   flow_1  ← (feedback)
-#
-# Expressions (match labStore.createReinforcingFeedbackLoop output for k=0.1):
-#   multiplier = "(0.1) * (stock_1)"
-#   flow       = "max(0, (0) + (variable_1))"
+# ===========================================================================
 
-_REINFORCING_LOOPS_CONTENT = """\
-## Reinforcing Feedback Loops: Engines of Growth and Collapse
+REINFORCING_LOOPS_CONTENT = """\
 
-The second fundamental loop type is the **reinforcing loop** — the engine of \
-exponential growth and exponential collapse.
+**Learning objective:** You can recognize a reinforcing (amplifying) feedback loop, trace its polarity, and understand how it produces exponential growth or runaway decline.
 
-Where a balancing loop resists change, a reinforcing loop *amplifies* it. \
-Whatever is happening, a reinforcing loop makes it happen faster. More leads \
-to more; less leads to less.
+Reinforcing loops, also called positive feedback loops, are the second fundamental type of feedback. While balancing loops seek stability, reinforcing loops *amplify* change. They are the engines behind exponential growth, success spirals, vicious cycles, and collapse.
 
-### Compound Interest
+### What Is a Reinforcing Loop?
 
-The classic example is compound interest:
-- You deposit money (the **stock**).
-- The bank pays interest proportional to your balance (the **flow**).
-- That interest is added to your balance.
-- Now you earn interest on a larger balance.
-- Growth accelerates.
+A reinforcing loop occurs when a **stock** influences a **flow** that then changes the same stock in the *same direction*.  
+More leads to more. Less leads to less.
 
-The stock's output loops back as its own input — **the stock feeds its own flow**.
+The loop feeds on itself and makes small changes grow rapidly over time.
 
-### Growth and Collapse
+### Classic Example: Compound Interest
 
-Reinforcing loops work in both directions:
-- **Positive polarity** — more stock → larger inflow → more stock (exponential growth)
-- **Negative polarity** — less stock → smaller inflow → less stock (collapse spiral)
+- **Stock**: Money in your savings account
+- **Flow**: Interest added each year
+- The more money you have (stock), the more interest you earn (flow).
+- That interest is added back to the stock, even more interest next year.
 
-A declining population generates fewer births, accelerating the decline. A \
-failing company loses customers, reducing revenue, leading to more failure.
+This is pure reinforcement: the stock strengthens its own growth.
 
-### Left Unchecked
+### How Reinforcing Loops Work in Both Directions
 
-In real systems reinforcing loops do not grow forever. They are eventually \
-limited by a balancing loop or a physical constraint — setting up the \
-*S-shaped growth* pattern explored later.
+Reinforcing loops have **polarity**:
 
-> **Key insight:** The growth rate k and the polarity of the loop determine \
-how quickly the exponential process unfolds. Identify the stock that feeds \
-its own flow.
+- **Growth direction** (positive polarity): More stock creates stronger inflow, which creates even more stock, producing exponential growth.
+- **Decline direction** (negative polarity): Less stock creates weaker inflow, which creates even less stock, producing accelerating collapse.
 
-In the first task, watch compound interest grow a savings account \
-exponentially. In the second task, build a reinforcing loop for a growing \
-population.\
+**Real world examples:**
+- Population growth: More people, more births, more people.
+- Word of mouth sales: More customers, more recommendations, more customers.
+- Vicious cycle: Failing company, fewer customers, less revenue, more failure.
+- Soil erosion: Less soil, poorer grass, even less soil.
+
+### Key Properties of Reinforcing Loops
+
+- They are **self enhancing**, they amplify whatever direction of change is already happening.
+- They generate **exponential behavior** (the famous hockey stick curve).
+- They are extremely powerful, but rarely run forever unchecked.
+- In real systems, reinforcing loops eventually meet **balancing loops** or physical limits, often creating **S shaped growth** or **overshoot and collapse**.
+
+> **Key insight:**  
+> “A reinforcing feedback loop enhances whatever direction of change is imposed on the system. It generates more input to a stock the more that is already there (and less input the less that is already there). Reinforcing feedback loops are self enhancing, leading to exponential growth or to runaway collapses over time.”
+
+### Why This Matters
+
+Reinforcing loops explain both miracles of growth and tragic downward spirals. Understanding them helps you spot where small interventions can have huge effects, either to accelerate good growth or to break destructive cycles.
+
+### In the Lab
+
+The lab separates a finished reinforcing reference from one completion task and two blank canvas challenges.
+
+- **Task 1: Population growth (R)**  
+  Use the finished population growth reference graph to trace stock, multiplier, inflow, and stock again.
+- **Task 2: Self confidence spiral**  
+  Finish the self confidence spiral by adding the multiplier expression and reinforcing information links.
+- **Task 3: Compound interest**  
+  Build a compound interest reinforcing loop from a blank canvas.
+- **Task 4: Viral adoption**  
+  Build a viral adoption reinforcing loop from a blank canvas.
+
+Mastering reinforcing loops is crucial, they drive most of the dramatic change we see in economies, populations, technologies, and ecosystems.
 """
 
-_REINFORCING_LOOP_DEMO = _graph(
+REINFORCING_LOOP_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Savings Account", 380, 220, quantity=100, unit="$"),
-        _flow(
-            "flow_1",
-            "Interest Earned",
-            80,
-            220,
-            bottleneck=0,
-            expression="max(0, (0) + (variable_1))",
-            base_flow_expression="0",
-            unit="$/step",
+        make_comment_node(
+            "r1_intro",
+            "Reference: population (R). Orange links = the (R) loop. Gray **k → multiplier** link = that parameter feeds the **(r1_k)** in the expression (change **k** in the left panel, then Run).",
+            20,
+            20,
         ),
-        _variable(
-            "variable_1",
-            "Growth Multiplier",
-            230,
+        make_comment_node(
+            "r1_chart",
+            "After **Run**, the population chart curves upward. Change **k** in the toolbar and re-run.",
+            420,
+            20,
+        ),
+        make_constant_node(
+            "r1_k",
+            "k (growth per person / step)",
             90,
-            expression="(0.1) * (stock_1)",
+            100,
+            quantity=0.1,
+            unit="1/step",
+            color=C_AUX,
+            student_tooltip="Gray arrow to the multiplier: this value is used in (r1_k)×(stock_1).",
+        ),
+        make_variable_node(
+            "variable_1",
+            "Implied net births = (r1_k) × P",
+            280,
+            130,
+            expression="(r1_k) * (stock_1)",
             loop_id="loop_1",
             loop_role="reinforcingMultiplier",
             fb_type="reinforcing",
             persistent=True,
             reinforcing_text_only=True,
+            color=C_REINFORCING,
+            student_tooltip="Multiplier in the (R) loop: inflow scales with the stock through k.",
+        ),
+        make_flow_node(
+            "flow_1",
+            "Net births (growth inflow)",
+            90,
+            300,
+            bottleneck=0,
+            expression="max(0, (0) + (variable_1))",
+            base_flow_expression="0",
+            unit="people/step",
+            student_tooltip="Material inflow: net people added per step, reinforced by the loop.",
+        ),
+        make_stock_node(
+            "stock_1",
+            "Population P",
+            400,
+            300,
+            quantity=100,
+            unit="people",
+            student_tooltip="Stock: people in the region. (R) means more P → more births → more P.",
         ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1",    "stock_1"),
-        _fb_edge("edge_2", "stock_1",   "variable_1", fb_type="reinforcing", polarity="positive", persistent=True),
-        _fb_edge("edge_3", "variable_1", "flow_1",    fb_type="reinforcing", polarity="positive", persistent=True),
+        make_inflow_edge("edge_1", "flow_1", "stock_1"),
+        make_feedback_edge("r1_e_k", "r1_k", "variable_1"),
+        make_feedback_edge("edge_2", "stock_1", "variable_1", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("edge_3", "variable_1", "flow_1", fb_type="reinforcing", polarity="positive", persistent=True),
     ],
     feedback_loops=[
-        _reinforcing_loop(
+        make_reinforcing_loop(
             "loop_1",
             "stock_1",
             "variable_1",
@@ -673,757 +2233,2905 @@ _REINFORCING_LOOP_DEMO = _graph(
     ],
 )
 
-_REINFORCING_LOOP_CHALLENGE = _graph(
+REINFORCING_CONFIDENCE_ALMOST = compose_graph(
     nodes=[
-        _stock("stock_1", "Population", 380, 220, quantity=50, unit="people"),
-        _flow("flow_1",   "Net Growth",  80,  220, bottleneck=0, unit="people/step"),
+        make_comment_node(
+            "cf_howto",
+            "(1) Set the orange **multiplier** (e.g. `(0.12)*(cf_s)`). (2) Add the two **(R)** links or use *Create → Reinforcing loop* on the inflow, then run.",
+            420,
+            20,
+        ),
+        make_stock_node(
+            "cf_s",
+            "Self-confidence",
+            400,
+            300,
+            quantity=40,
+            unit="index",
+            student_tooltip="Stock: confidence is reinforced when success arrives faster than it fades.",
+        ),
+        make_flow_node(
+            "cf_f",
+            "Successful attempts / week",
+            90,
+            300,
+            bottleneck=0,
+            expression="max(0, (0) + (cf_m))",
+            base_flow_expression="0",
+            unit="pts/wk",
+            student_tooltip="Inflow: wins / positive feedback. Stays 0 until the multiplier (cf_m) is set.",
+        ),
+        make_variable_node(
+            "cf_m",
+            "Set: k × self confidence (empty)",
+            260,
+            120,
+            expression="",
+            color=C_REINFORCING,
+            student_tooltip="Add your formula: k times the confidence stock, or pair this node with a reinforcing loop from the flow.",
+        ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1", "stock_1"),
+        make_inflow_edge("cf_e1", "cf_f", "cf_s"),
     ],
+    feedback_loops=[],
 )
 
 LESSON_REINFORCING_LOOPS = {
-    "title": "Reinforcing Feedback Loops",
-    "order_index": 2,
-    "content_markdown": _REINFORCING_LOOPS_CONTENT,
+    "title": "Reinforcing Loop",
+    "order_index": 1,
+    "content_markdown": REINFORCING_LOOPS_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Compound Interest",
+            "title": "Task 1: Population growth (R)",
             "description": (
-                "A savings account starts with 100 units. A reinforcing loop pays 10% "
-                "interest per step — the more money in the account, the more interest it "
-                "earns. Run the simulation for 40 steps and observe exponential growth."
+                "Open the **finished reference** graph (notes, constant k, stock, inflow, multiplier, orange links). "
+                "Run the simulation and explain how **more people → more births → more people** shows up in the **chart** "
+                "(bending growth vs straight-line growth if k were zero)."
             ),
-            "graph": _REINFORCING_LOOP_DEMO,
+            "graph": REINFORCING_LOOP_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Population Growth",
+            "title": "Task 2: Self-confidence spiral",
             "description": (
-                "A population starts at 50 people. Build a reinforcing feedback loop "
-                "where population drives its own net growth (polarity: positive). "
-                "Experiment with different values of k. Run 50 steps and compare the "
-                "growth curves."
+                "The canvas is **almost ready**: stock and the success **inflow** are wired, but the **reinforcing link** is "
+                "incomplete. Follow the on-canvas note: set the **orange multiplier** and add the two **(R) feedback** edges "
+                "(or use *Create → Reinforcing loop* on the inflow), run the model, and describe the virtuous cycle in one short paragraph."
             ),
-            "graph": _REINFORCING_LOOP_CHALLENGE,
+            "graph": REINFORCING_CONFIDENCE_ALMOST,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Compound interest",
+            "description": (
+                "Start from an **empty graph**. Build a **compound interest** reinforcing loop: **savings** as stock, **interest** "
+                "as inflow that scales with the balance. Run the simulation, then **submit your model and a short write-up to your "
+                "teacher** (how the curve differs from a fixed inflow). Optional: name how this differs from treating the interest "
+                "rate as a *constant parameter* in other lessons."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Viral adoption",
+            "description": (
+                "Start from an **empty graph**. Build a **viral product adoption** loop: **active users** as stock, **new user** "
+                "inflow that scales with the user base (reinforcing). Run the simulation, **submit the graph and explanation to your "
+                "teacher**, and name one real product or idea that resembled this pattern early on."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 3,
         },
     ],
 }
 
 
-# =============================================================================
-# Section 2 — System Dynamics
-# =============================================================================
+# ===========================================================================
+# Lesson: Delays (in feedback)
+# ===========================================================================
 
-# ---------------------------------------------------------------------------
-# Lesson 4: Delays and Oscillation
-# ---------------------------------------------------------------------------
-#
-# Same thermostat layout as Lesson 2 but with delayEnabled=True, delaySteps=5.
-#
-# Corrective expression with delay (matches labStore.correctiveExpression):
-#   "(max(0, (delay(\"variable_1\", 5)))) / (3)"
+DELAYS_CONTENT = """\
 
-_DELAYS_CONTENT = """\
-## Delays: When Information Arrives Too Late
+**Learning objective:** You can explain how delays in feedback loops (especially balancing ones) cause oscillation and overshoot, and you can experiment with delay length in models.
 
-One of Meadows' most important insights is the role of **delays** — the time \
-gaps between cause and effect that make systems behave in surprising and \
-often counterproductive ways.
+One of the most important lessons in systems thinking is the powerful and often underestimated role of **delays**. Delays are the time gaps between an action and its visible effect, and they are everywhere in real systems.
 
-### The Shower Problem
+### The Classic Shower Example
 
-You step into a cold shower and turn up the hot water. Nothing happens. You \
-turn it further. Still cold. Then — thirty seconds later — scalding water \
-arrives. You turn it down fast. Now it's cold again.
+You turn on the shower and it’s cold. You crank up the hot water. Nothing happens immediately, so you turn it even higher. Suddenly, scalding water! You quickly turn it down too far. Now it’s freezing again. You oscillate between too hot and too cold.
 
-The **delay** between your action and the result caused you to overshoot \
-and oscillate. This is precisely what delays do to balancing feedback loops.
+This everyday frustration perfectly illustrates what delays do in systems: they cause **overshoot** and **oscillation**.
 
-### Oscillation in Balancing Loops
+### Why Delays Create Oscillation
 
-A balancing loop with a significant delay will:
-1. Detect a gap and take corrective action.
-2. The action's effect arrives *after* the loop expected a change.
-3. The system overshoots the goal.
-4. The loop corrects in the other direction — overshooting again.
-5. Result: **oscillation** around the target.
+In a balancing loop without delay, the system gently corrects toward the goal.  
+Add a significant delay and the behavior changes dramatically:
 
-The same dynamic explains supply-chain crises, boom-bust economic cycles, \
-and population oscillations.
+1. The system detects a gap and takes strong corrective action.
+2. Because of the delay, the effect of that action arrives **late**, after the gap has already started closing on its own.
+3. The system has already overshot the goal.
+4. The balancing loop now corrects in the opposite direction, often too strongly.
+5. The result: persistent **oscillation** around the target.
 
-### Managing Delays
+A delay in a balancing feedback loop makes a system likely to oscillate.
 
-Meadows identifies delays as **leverage points**. Reducing delays — faster \
-information, faster delivery — is one of the most effective ways to stabilise \
-an oscillating system. Alternatively, *slowing your response* to match the \
-delay can prevent overshoot.
+### Common Real World Examples
 
-> **Key insight:** The longer the delay in a balancing loop, the greater the \
-tendency to oscillate. Knowing a delay exists and responding more slowly can \
-paradoxically improve stability.
+- **Supply chains**: Orders placed based on current sales, but goods arrive weeks later, boom and bust inventory cycles.
+- **Economics**: Policy decisions react to data that is already outdated, economic cycles.
+- **Population**: Time between birth decisions and actual population impact, oscillations.
+- **Ecosystems**: Predator prey cycles.
 
-In the first task, watch the same thermostat from Lesson 2 — now with a 5-step \
-information delay. Notice how temperature overshoots its target and oscillates. \
-In the second task, build a supply chain with a restocking delay.\
+### Key Insights
+
+- Delays are **pervasive** and strong determinants of system behavior.
+- **Short delays** can still create overreaction and amplified oscillation.
+- **Long delays** can create sluggish response, sustained oscillation, or exploding oscillation.
+- **Leverage point**: You can often stabilize a system either by **shortening the delay** (faster information or response) **or** by **slowing down the corrective action** to match the delay.
+
+> **Key insight:**  
+> “Delays in feedback loops are critical relative to the rates of change in the system. They are a common cause of oscillations. Changing the length of a delay may (or may not) make a large change in the behavior of a system.”
+
+Delays explain why well intentioned interventions often make things worse, and why patience and foresight are essential in complex systems.
+
+### In the Lab
+
+The lab uses delayed balancing loops in inventory, pollution, management, and supply chain settings.
+
+
+- **Task 1: Car dealership**  
+  Use the finished car dealership graph to trace target inventory, delayed reorder correction, shipments, and customer sales.
+- **Task 2: Pollution visibility**  
+  Finish the pollution visibility model by completing the delayed response path.
+- **Task 3: Decision making lag**  
+  Build a project quality model where late metrics cause delayed improvement initiatives and possible overcorrection.
+- **Task 4: Supply chain**  
+  Build a retail shelf model with customer purchases, target stock, delayed replenishment, and order to receipt delay.
+
+Understanding delays is one of the most practical skills in systems thinking, it helps you stop fighting the system and start working with its natural timing.
 """
 
-_DELAYS_DEMO = _graph(
+DELAYS_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Room Temperature", 380, 250, quantity=10, unit="°C"),
-        _flow(
-            "flow_1",
-            "Heater",
-            80,
-            250,
+        make_stock_node(
+            "stock_1",
+            "Cars in Stock",
+            420,
+            260,
+            quantity=55,
+            unit="cars",
+            student_tooltip="Inventory on the lot. Sales drain it; delayed shipments refill it: often too late, causing swings.",
+        ),
+        make_flow_node(
+            "flow_in",
+            "Shipments from factory",
+            100,
+            260,
             bottleneck=0,
             expression="max(0, (0) + (variable_2))",
             base_flow_expression="0",
-            unit="°C/step",
+            unit="cars/step",
+            student_tooltip="Inflow: cars arriving per step after orders work through the pipeline.",
         ),
-        _constant(
-            "constant_1",
-            "Desired Temperature",
-            380,
-            60,
-            quantity=20,
+        make_flow_node(
+            "flow_out",
+            "Customer sales",
+            720,
+            260,
+            bottleneck=13,
+            unit="cars/step",
+            student_tooltip="Outflow: cars sold per step: steady demand pulls inventory down.",
+        ),
+        make_constant_node(
+            "constant_goal",
+            "Target inventory on lot",
+            420,
+            70,
+            quantity=85,
             loop_id="loop_1",
             loop_role="goal",
             fb_type="balancing",
-            unit="°C",
+            unit="cars",
+            color=C_AUX,
+            student_tooltip="Goal: how many cars management wants on hand. Edit to see how the target reshapes oscillation.",
         ),
-        _variable(
+        make_constant_node(
+            "constant_delay",
+            "Delay: order → delivery (6 steps)",
+            620,
+            40,
+            quantity=6,
+            unit="steps",
+            color=C_DELAY,
+            student_tooltip="Yellow delay marker (Delay lesson only): lag between placing orders and receiving cars: drives oscillation.",
+        ),
+        make_variable_node(
             "variable_1",
-            "Discrepancy",
-            380,
-            165,
-            expression="(stock_1 < constant_1 ? (constant_1 - stock_1) : 0)",
+            "Stockout gap (target − on hand)",
+            420,
+            170,
+            expression="(stock_1 < constant_goal ? (constant_goal - stock_1) : 0)",
             loop_id="loop_1",
             loop_role="discrepancy",
             fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="How far below target you are. Drives ordering: but the effect is delayed.",
         ),
-        _variable(
+        make_variable_node(
             "variable_2",
-            "Corrective Action",
-            80,
-            165,
-            expression='(max(0, (delay("variable_1", 5)))) / (3)',
+            "Order rate (delayed correction)",
+            100,
+            170,
+            expression='(max(0, (delay("variable_1", 6)))) / (4)',
             loop_id="loop_1",
             loop_role="correctiveAction",
             fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective orders: scaled from a *delayed* view of the gap: classic source of inventory cycles.",
         ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1",    "stock_1"),
-        _fb_edge("edge_2", "constant_1", "variable_1"),
-        _fb_edge("edge_3", "stock_1",    "variable_1"),
-        _fb_edge("edge_4", "variable_1", "variable_2"),
-        _fb_edge("edge_5", "variable_2", "flow_1", op="add"),
+        make_inflow_edge("e_in", "flow_in", "stock_1"),
+        make_outflow_edge("e_out", "stock_1", "flow_out"),
+        make_feedback_edge("e2", "constant_goal", "variable_1", fb_type="balancing"),
+        make_feedback_edge("e3", "stock_1", "variable_1", fb_type="balancing"),
+        make_feedback_edge("e4", "variable_1", "variable_2", fb_type="balancing"),
+        make_feedback_edge("e5", "variable_2", "flow_in", op="add", fb_type="balancing"),
     ],
     feedback_loops=[
-        _balancing_loop(
+        make_balancing_loop(
             "loop_1",
             "stock_1",
-            "constant_1",
+            "constant_goal",
             "variable_1",
             "variable_2",
-            "flow_1",
-            ["edge_2", "edge_3", "edge_4", "edge_5"],
+            "flow_in",
+            ["e2", "e3", "e4", "e5"],
             boundary_type="lower",
-            goal_value=20,
-            adjustment_time=3,
+            goal_value=85,
+            adjustment_time=4,
             delay_enabled=True,
-            delay_steps=5,
+            delay_steps=6,
         )
     ],
 )
 
-# Challenge: a simple inventory with separate restocking and sales flows.
-# Students observe that fixed sales eventually drain inventory, and optionally
-# add a balancing loop with delay to model a realistic restocking policy.
-_DELAYS_CHALLENGE = _graph(
+DELAYS_POLLUTION_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Inventory",   350, 200, quantity=100, unit="units"),
-        _flow("flow_1",   "Restocking",   80,  200, bottleneck=0, unit="units/step"),
-        _flow("flow_2",   "Sales",        620, 200, bottleneck=12, unit="units/step"),
+        make_stock_node(
+            "dp_s",
+            "Water quality index",
+            420,
+            260,
+            quantity=58,
+            unit="index",
+            student_tooltip="Stock: quality people care about: restoration funding reacts only after delayed reports.",
+        ),
+        make_flow_node(
+            "dp_in",
+            "Restoration & treatment (delayed)",
+            100,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (dp_c))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: cleanup effort that finally arrives after decision-makers see the gap (delayed).",
+        ),
+        make_flow_node(
+            "dp_out",
+            "Ongoing emissions & runoff",
+            720,
+            260,
+            bottleneck=9,
+            unit="index/step",
+            student_tooltip="Outflow: pollution stressors dragging quality down each step.",
+        ),
+        make_constant_node(
+            "dp_goal",
+            "Public health target",
+            420,
+            70,
+            quantity=72,
+            loop_id="dp_l",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="index",
+            color=C_AUX,
+        ),
+        make_constant_node(
+            "dp_delay",
+            "Lag: emission → visible harm (6 steps)",
+            620,
+            40,
+            quantity=6,
+            unit="steps",
+            color=C_DELAY,
+            student_tooltip="Yellow: delay between causes and visible effects: only in Delay lesson graphs.",
+        ),
+        make_variable_node(
+            "dp_d",
+            "Gap above safe level",
+            420,
+            170,
+            expression="(dp_s < dp_goal ? (dp_goal - dp_s) : 0)",
+            loop_id="dp_l",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "dp_c",
+            "Policy response (delayed)",
+            100,
+            170,
+            expression='(max(0, (delay("dp_d", 6)))) / (4)',
+            loop_id="dp_l",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
     ],
     edges=[
-        _inflow("edge_1",  "flow_1",  "stock_1"),
-        _outflow("edge_2", "stock_1", "flow_2"),
+        make_inflow_edge("dp_i1", "dp_in", "dp_s"),
+        make_outflow_edge("dp_o1", "dp_s", "dp_out"),
+        make_feedback_edge("dp_f2", "dp_goal", "dp_d", fb_type="balancing"),
+        make_feedback_edge("dp_f3", "dp_s", "dp_d", fb_type="balancing"),
+        make_feedback_edge("dp_f4", "dp_d", "dp_c", fb_type="balancing"),
+        make_feedback_edge("dp_f5", "dp_c", "dp_in", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "dp_l",
+            "dp_s",
+            "dp_goal",
+            "dp_d",
+            "dp_c",
+            "dp_in",
+            ["dp_f2", "dp_f3", "dp_f4", "dp_f5"],
+            boundary_type="lower",
+            goal_value=72,
+            adjustment_time=4,
+            delay_enabled=True,
+            delay_steps=6,
+        )
+    ],
+)
+
+DELAYS_DECISION_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "dd_s",
+            "Project quality",
+            420,
+            260,
+            quantity=52,
+            unit="index",
+            student_tooltip="Stock: quality of the work: managers only see it through delayed reports.",
+        ),
+        make_flow_node(
+            "dd_in",
+            "Improvement initiatives",
+            100,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (dd_c))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: fixes launched after metrics finally show a gap.",
+        ),
+        make_flow_node(
+            "dd_out",
+            "Scope churn / rework drag",
+            720,
+            260,
+            bottleneck=11,
+            unit="index/step",
+        ),
+        make_constant_node(
+            "dd_goal",
+            "Quality bar (target)",
+            420,
+            70,
+            quantity=72,
+            loop_id="dd_l",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="index",
+            color=C_AUX,
+        ),
+        make_constant_node(
+            "dd_delay",
+            "Lag: action → measured result (6 steps)",
+            620,
+            40,
+            quantity=6,
+            unit="steps",
+            color=C_DELAY,
+        ),
+        make_variable_node(
+            "dd_d",
+            "Quality gap",
+            420,
+            170,
+            expression="(dd_s < dd_goal ? (dd_goal - dd_s) : 0)",
+            loop_id="dd_l",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "dd_c",
+            "Management correction (delayed)",
+            100,
+            170,
+            expression='(max(0, (delay("dd_d", 6)))) / (4)',
+            loop_id="dd_l",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("dd_i1", "dd_in", "dd_s"),
+        make_outflow_edge("dd_o1", "dd_s", "dd_out"),
+        make_feedback_edge("dd_f2", "dd_goal", "dd_d", fb_type="balancing"),
+        make_feedback_edge("dd_f3", "dd_s", "dd_d", fb_type="balancing"),
+        make_feedback_edge("dd_f4", "dd_d", "dd_c", fb_type="balancing"),
+        make_feedback_edge("dd_f5", "dd_c", "dd_in", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "dd_l",
+            "dd_s",
+            "dd_goal",
+            "dd_d",
+            "dd_c",
+            "dd_in",
+            ["dd_f2", "dd_f3", "dd_f4", "dd_f5"],
+            boundary_type="lower",
+            goal_value=72,
+            adjustment_time=4,
+            delay_enabled=True,
+            delay_steps=6,
+        )
+    ],
+)
+
+DELAYS_SUPPLY_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "ds_s",
+            "Retail shelf stock",
+            420,
+            260,
+            quantity=40,
+            unit="cases",
+            student_tooltip="Stock: finished goods at store: swings when warehouse shipments lag.",
+        ),
+        make_flow_node(
+            "ds_in",
+            "Warehouse shipments",
+            100,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (ds_c))",
+            base_flow_expression="0",
+            unit="cases/step",
+        ),
+        make_flow_node(
+            "ds_out",
+            "Customer purchases",
+            720,
+            260,
+            bottleneck=12,
+            unit="cases/step",
+        ),
+        make_constant_node(
+            "ds_goal",
+            "Target on-shelf inventory",
+            420,
+            70,
+            quantity=68,
+            loop_id="ds_l",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="cases",
+            color=C_AUX,
+        ),
+        make_constant_node(
+            "ds_delay",
+            "Lag: order → receipt (6 steps)",
+            620,
+            40,
+            quantity=6,
+            unit="steps",
+            color=C_DELAY,
+        ),
+        make_variable_node(
+            "ds_d",
+            "Shelf gap",
+            420,
+            170,
+            expression="(ds_s < ds_goal ? (ds_goal - ds_s) : 0)",
+            loop_id="ds_l",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "ds_c",
+            "Replenishment orders (delayed)",
+            100,
+            170,
+            expression='(max(0, (delay("ds_d", 6)))) / (4)',
+            loop_id="ds_l",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("ds_i1", "ds_in", "ds_s"),
+        make_outflow_edge("ds_o1", "ds_s", "ds_out"),
+        make_feedback_edge("ds_f2", "ds_goal", "ds_d", fb_type="balancing"),
+        make_feedback_edge("ds_f3", "ds_s", "ds_d", fb_type="balancing"),
+        make_feedback_edge("ds_f4", "ds_d", "ds_c", fb_type="balancing"),
+        make_feedback_edge("ds_f5", "ds_c", "ds_in", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "ds_l",
+            "ds_s",
+            "ds_goal",
+            "ds_d",
+            "ds_c",
+            "ds_in",
+            ["ds_f2", "ds_f3", "ds_f4", "ds_f5"],
+            boundary_type="lower",
+            goal_value=68,
+            adjustment_time=4,
+            delay_enabled=True,
+            delay_steps=6,
+        )
     ],
 )
 
 LESSON_DELAYS = {
-    "title": "Delays and Oscillation",
-    "order_index": 0,
-    "content_markdown": _DELAYS_CONTENT,
+    "title": "Delay",
+    "order_index": 2,
+    "content_markdown": DELAYS_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Thermostat with Delay",
+            "title": "Task 1: Car dealership",
             "description": (
-                "The same thermostat from Lesson 2 now has a 5-step information delay "
-                "in the corrective action. Run for 80 steps. Notice how the temperature "
-                "overshoots 20 °C and then oscillates before (slowly) settling."
+                "Run the dealership model with **delivery delay**. Show how **inventory** oscillates "
+                "when reorders react to old shelf information (yellow delay node + delayed balancing link)."
             ),
-            "graph": _DELAYS_DEMO,
+            "graph": DELAYS_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Inventory with Restocking",
+            "title": "Task 2: Pollution visibility",
             "description": (
-                "An inventory starts at 100 units and sells 12 units per step. The "
-                "restocking flow starts at 0. Without restocking, the inventory depletes "
-                "in ~8 steps. Add a balancing feedback loop to the restocking flow that "
-                "targets an inventory of 80 units. Then increase the adjustment time and "
-                "observe whether oscillation appears."
+                "Run the pollution story: **emissions → delayed visible harm → delayed policy response**. "
+                "Explain why people might say ‘we only reacted once it was obvious.’"
             ),
-            "graph": _DELAYS_CHALLENGE,
+            "graph": DELAYS_POLLUTION_DEMO,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Decision making lag",
+            "description": (
+                "Run the project-quality model: **metrics arrive late**, so management overshoots fixes. "
+                "Describe one real project where that pattern appeared."
+            ),
+            "graph": DELAYS_DECISION_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Supply chain",
+            "description": (
+                "Run the supply-chain shelf model with **order to receipt delay**. "
+                "Compare amplitude or frequency of swings when you imagine a faster supplier vs a slower one."
+            ),
+            "graph": DELAYS_SUPPLY_DEMO,
+            "order_index": 3,
         },
     ],
 }
 
 
-# ---------------------------------------------------------------------------
-# Lesson 5: S-Shaped Growth
-# ---------------------------------------------------------------------------
-#
-# Demo: logistic growth  dN/dt = r·N·(1 − N/K)  with r=0.3, K=100.
-# No feedback loop needed — the expression encodes both the reinforcing and
-# balancing dynamics in one formula.
+# =============================================================================
+# System properties
+# =============================================================================
 
-_S_SHAPED_GROWTH_CONTENT = """\
-## S-Shaped Growth: When Reinforcing Loops Meet Limits
 
-One of the most universal patterns in nature, economics, and technology is \
-**S-shaped (logistic) growth** — and Meadows shows that it always arises from \
-the same structural interaction: a reinforcing loop that eventually encounters \
-a balancing limit.
+# ===========================================================================
+# Resilience
+# ===========================================================================
 
-### The Pattern
+RESILIENCE_CONTENT = """\
 
-Many growing things don't grow forever:
-- Populations grow exponentially — until food, space, or disease limits them.
-- Companies expand rapidly — until market saturation slows them.
-- Technology spreads fast — until everyone who would adopt it already has.
+**Learning objective:** You can define **resilience**, explain why it often conflicts with efficiency, and identify structural elements (buffers, redundancy, diversity) that build resilience in a system diagram.
 
-In each case, an initial **reinforcing loop** (more growth → more resources \
-for growth) eventually meets a **balancing loop** (as resources diminish, \
-growth slows toward a carrying capacity K).
+Resilience is one of the most important properties of complex systems. It can be defined as:
 
-### The Logistic Equation
+> “The ability of a system to survive and persist within a variable environment. The opposite of brittleness or fragility.”
 
-```
-dN/dt = r × N × (1 − N/K)
-```
-- `r` — intrinsic growth rate
-- `N` — current population (the stock)
-- `K` — carrying capacity (the limit)
-- When N is small: the term (1 − N/K) ≈ 1 → near-exponential growth
-- When N → K: the term → 0 → growth stops
+Resilient systems can take hits, absorb disturbances, and bounce back, sometimes even reorganizing into a better state.
 
-The inflection point occurs at N = K/2 — where growth rate is highest.
+### Efficiency vs. Resilience
 
-### What This Means for Intervention
+Modern systems are often optimized for **maximum efficiency** (just in time production, minimal inventory, tight optimization). This comes at a high cost:
 
-- **Raise K** (increase capacity) — often the instinct, but can be costly.
-- **Lower r** (reduce growth rate) — effective but resisted.
-- **Act early** — the closer the system is to K, the harder to change.
+- Highly efficient systems run with almost no slack or spare capacity.
+- When a shock hits (a supplier failure, a storm, a market crash), they break easily.
+- Resilient systems deliberately keep **buffers**, **redundancy**, and **diversity**, even if it looks “wasteful” in the short term.
 
-> **Key insight:** The S-curve is a signature of a reinforcing loop losing \
-dominance to a balancing loop as a limit is approached.
+### What Builds Resilience?
 
-In the first task, observe logistic population growth. In the second task, \
-model technology adoption with a carrying capacity of your choice.\
+Several structural features create resilience:
+
+1. **Buffers / Extra Stocks**, spare inventory, savings, wetlands that store water, backup generators.
+2. **Redundancy**, multiple pathways, backup suppliers, cross trained people.
+3. **Diversity**, many different species, suppliers, ideas, or strategies.
+4. **Self repair and Self organization**, the system’s ability to heal and adapt without external help.
+
+**Toy model in this lesson:**
+- An **operating stock** (what you normally see and use) is under constant pressure.
+- A **redundant buffer stock** can release capacity when the main stock is depleted.
+- This buffer represents real world resilience mechanisms: emergency funds, spare parts, biodiversity, social safety nets.
+
+### Key Insight
+
+> “Resilience is not the same thing as being static or constant over time. Resilient systems can be very dynamic… A system that can recover from perturbation is resilient.”
+
+Resilience is often invisible when everything is going well, but it becomes obvious the moment a disturbance hits. Systems that look highly productive in good times can prove dangerously fragile when conditions change.
+
+### In the Lab
+
+The lab uses resilience examples from ecosystems, cities, health, and biodiversity.
+
+
+- **Task 1: Forest after fire**  
+  Use the finished forest graph to identify tree cover, soil organic matter, animal activity, the fire shock, and parallel recovery paths.
+- **Task 2: City economy after crisis**  
+  Finish the city recovery model by adding the missing recovery formula and connecting the support path.
+- **Task 3: Personal health recovery**  
+  Build a personal health recovery model with a health stock, illness drain, restorative inflows, and at least one buffer or support stock.
+- **Task 4: Biodiversity resistance**  
+  Build a biodiversity model with at least two species or function stocks and parallel recovery paths after disturbance.
+
+**Important reminder:** Building resilience almost always involves a trade off with short term efficiency. The art of good system design is knowing when to optimize for productivity and when to invest in resilience.
 """
 
-_S_SHAPED_GROWTH_DEMO = _graph(
+RESILIENCE_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "Population", 380, 220, quantity=10, unit="people"),
-        _flow(
-            "flow_1",
-            "Net Growth Rate",
+        make_stock_node(
+            "stock_tr",
+            "Tree cover (canopy)",
+            420,
+            260,
+            quantity=62,
+            unit="index",
+            student_tooltip="Forest canopy / living biomass. Fire removes it; regrowth loop pulls it toward the teal goal.",
+        ),
+        make_stock_node(
+            "stock_sl",
+            "Soil organic matter",
+            200,
+            260,
+            quantity=58,
+            unit="index",
+            student_tooltip="Soil fertility stock. The second balancing loop rebuilds organic matter after disturbance.",
+        ),
+        make_stock_node(
+            "stock_an",
+            "Animal activity",
+            660,
+            260,
+            quantity=36,
+            unit="index",
+            student_tooltip="Wildlife supported by habitat quality. Tied to tree cover: diversity of stocks matters for resilience.",
+        ),
+        make_flow_node(
+            "flow_fire",
+            "Fire / drought damage",
             80,
-            220,
+            260,
+            bottleneck=9,
+            unit="index/step",
+            student_tooltip="Outflow: acute stress on canopy (wildfire, die-off). Try adjusting severity in the editor.",
+        ),
+        make_flow_node(
+            "flow_tr_in",
+            "Natural regrowth",
+            300,
+            400,
             bottleneck=0,
-            expression="0.3 * stock_1 * (1 - stock_1 / 100)",
-            unit="people/step",
+            expression="max(0, (0) + (c_tr))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: canopy recovery driven by the first balancing loop (teal links).",
+        ),
+        make_flow_node(
+            "flow_sl_in",
+            "Soil rebuilding",
+            520,
+            400,
+            bottleneck=0,
+            expression="max(0, (0) + (c_sl))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: soil recovery: second balancing loop restoring organic matter.",
+        ),
+        make_flow_node(
+            "flow_an_in",
+            "Habitat → wildlife support",
+            660,
+            120,
+            bottleneck=0,
+            expression="max(0, (0.07) * (stock_tr))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow: better canopy supports more animal activity: coupling between stocks.",
+        ),
+        make_constant_node(
+            "cg_tr",
+            "Target healthy canopy",
+            420,
+            80,
+            quantity=92,
+            loop_id="loop_tr",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Goal for tree cover after disturbance: the regrowth loop seeks this level.",
+        ),
+        make_constant_node(
+            "cg_sl",
+            "Target soil fertility",
+            200,
+            80,
+            quantity=72,
+            loop_id="loop_sl",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Goal for soil organic matter: parallel recovery pathway.",
+        ),
+        make_variable_node(
+            "d_tr",
+            "Canopy gap",
+            420,
+            170,
+            expression="(stock_tr < cg_tr ? (cg_tr - stock_tr) : 0)",
+            loop_id="loop_tr",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="How far below healthy canopy the forest is.",
+        ),
+        make_variable_node(
+            "c_tr",
+            "Regrowth effort",
+            300,
+            170,
+            expression="(max(0, (d_tr))) / (5)",
+            loop_id="loop_tr",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Corrective regrowth rate from the canopy gap.",
+        ),
+        make_variable_node(
+            "d_sl",
+            "Soil gap",
+            200,
+            170,
+            expression="(stock_sl < cg_sl ? (cg_sl - stock_sl) : 0)",
+            loop_id="loop_sl",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Soil fertility shortfall after fire erosion.",
+        ),
+        make_variable_node(
+            "c_sl",
+            "Soil recovery effort",
+            520,
+            170,
+            expression="(max(0, (d_sl))) / (6)",
+            loop_id="loop_sl",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Processes that rebuild organic matter.",
         ),
     ],
     edges=[
-        _inflow("edge_1", "flow_1", "stock_1"),
+        make_outflow_edge("e_fire", "stock_tr", "flow_fire"),
+        make_inflow_edge("e_tri", "flow_tr_in", "stock_tr"),
+        make_inflow_edge("e_sli", "flow_sl_in", "stock_sl"),
+        make_inflow_edge("e_ani", "flow_an_in", "stock_an"),
+        make_feedback_edge("et2", "cg_tr", "d_tr", fb_type="balancing"),
+        make_feedback_edge("et3", "stock_tr", "d_tr", fb_type="balancing"),
+        make_feedback_edge("et4", "d_tr", "c_tr", fb_type="balancing"),
+        make_feedback_edge("et5", "c_tr", "flow_tr_in", op="add", fb_type="balancing"),
+        make_feedback_edge("es2", "cg_sl", "d_sl", fb_type="balancing"),
+        make_feedback_edge("es3", "stock_sl", "d_sl", fb_type="balancing"),
+        make_feedback_edge("es4", "d_sl", "c_sl", fb_type="balancing"),
+        make_feedback_edge("es5", "c_sl", "flow_sl_in", op="add", fb_type="balancing"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "loop_tr",
+            "stock_tr",
+            "cg_tr",
+            "d_tr",
+            "c_tr",
+            "flow_tr_in",
+            ["et2", "et3", "et4", "et5"],
+            boundary_type="lower",
+            goal_value=92,
+            adjustment_time=5,
+        ),
+        make_balancing_loop(
+            "loop_sl",
+            "stock_sl",
+            "cg_sl",
+            "d_sl",
+            "c_sl",
+            "flow_sl_in",
+            ["es2", "es3", "es4", "es5"],
+            boundary_type="lower",
+            goal_value=72,
+            adjustment_time=6,
+        ),
     ],
 )
 
-_S_SHAPED_GROWTH_CHALLENGE = _graph(
-    nodes=[
-        _stock("stock_1", "Adopters", 380, 220, quantity=5, unit="users"),
-        _flow("flow_1",   "New Adopters", 80, 220, bottleneck=0, unit="users/step"),
-    ],
-    edges=[
-        _inflow("edge_1", "flow_1", "stock_1"),
-    ],
-)
-
-LESSON_S_SHAPED_GROWTH = {
-    "title": "S-Shaped Growth",
-    "order_index": 1,
-    "content_markdown": _S_SHAPED_GROWTH_CONTENT,
+LESSON_RESILIENCE = {
+    "title": "Resilience",
+    "order_index": 0,
+    "content_markdown": RESILIENCE_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Logistic Population",
+            "title": "Task 1: Forest after fire",
             "description": (
-                "A population starts at 10. Its net growth rate follows the logistic "
-                "formula: 0.3 × N × (1 − N/100). Run 60 steps and observe the S-curve. "
-                "Identify the inflection point (fastest growth) and the plateau (carrying "
-                "capacity K = 100)."
+                "Run the forest ecosystem model. Show **recovery** after the **fire outflow**: "
+                "identify tree, soil, and animal stocks plus the teal balancing pathways."
             ),
-            "graph": _S_SHAPED_GROWTH_DEMO,
+            "graph": RESILIENCE_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Technology Adoption",
+            "title": "Task 2: City economy after crisis",
             "description": (
-                "A new technology starts with 5 adopters in a market of 500 potential "
-                "users (K = 500). Set the net growth expression on the flow so that "
-                "adoption follows logistic growth. Choose a growth rate r that produces "
-                "an S-curve. Run 80 steps."
+                "In a **new blank lab model** (or your notes), build a city economy recovery diagram: at least two stocks "
+                "and flows that represent bouncing back after a shock (contrast with a city that has no fiscal buffer)."
             ),
-            "graph": _S_SHAPED_GROWTH_CHALLENGE,
+            "graph": EMPTY_GRAPH,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Personal health recovery",
+            "description": (
+                "Model personal **health** recovering after illness: include a health stock, a drain representing the illness, "
+                "and restorative inflows (rest, care, nutrition). Relate to buffers in the forest lesson."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: High biodiversity resistance",
+            "description": (
+                "Using the forest diagram as a template, explain how **high biodiversity** "
+                "creates **parallel pathways** after disturbance. Name at least two species or functions that substitute for each other."
+            ),
+            "graph": RESILIENCE_DEMO,
+            "order_index": 3,
         },
     ],
 }
 
 
-# =============================================================================
-# Section 3 — System Archetypes
-# =============================================================================
+# ===========================================================================
+# Self-organization
+# ===========================================================================
 
-# ---------------------------------------------------------------------------
-# Lesson 6: Limits to Growth
-# ---------------------------------------------------------------------------
-#
-# Two coupled stocks: Business Revenue grows while depleting Market Opportunity.
-# Both flows share the same rate expression:  0.3 · rev · mkt / 200
-# As mkt → 0, the rate → 0 and growth stops.
+SELF_ORGANIZATION_CONTENT = """\
 
-_LIMITS_TO_GROWTH_CONTENT = """\
-## Limits to Growth: The Most Common System Archetype
+**Learning objective:** You can explain **self organization** as a system’s ability to create new structure, rules, and patterns from within, without a central designer, and recognize why it is one of the most powerful properties of living systems.
 
-Meadows dedicates a major portion of *Thinking in Systems* to **system \
-archetypes** — recurring structural patterns that produce predictable \
-behaviours. The most fundamental is **Limits to Growth**.
+Self organization can be defined as:
 
-### The Archetype
+> “The ability of a system to structure itself, to create new structure, to learn, diversify, and complexify.”
 
-**Structure:**
-- A growing stock fuelled by a reinforcing loop
-- A **constraining resource** or **limiting condition** that is consumed as \
-  the stock grows
-- A balancing loop that activates as the limit is approached, slowing growth
+Unlike a machine that is built once and stays the same, living systems (ecosystems, economies, organizations, cities, even languages) can **change their own structure** in response to internal and external conditions.
 
-**Behaviour over time:**
-- Early growth looks exponential — the sky seems to be the limit.
-- Then, seemingly suddenly, growth slows.
-- Pushing harder on the growth engine (the reinforcing loop) has diminishing \
-  returns.
+### What Self Organization Looks Like
 
-### Why We Misdiagnose It
+- A flock of birds forms complex patterns without a leader.
+- A neighborhood develops its own social norms and roles.
+- An economy evolves new industries and technologies.
+- An ecosystem develops new species interactions over time.
+- A startup grows from two people into a structured company with specialized departments.
 
-The natural instinct is to push *harder* on the growth engine — more \
-investment, more effort, more advertising. But this fails because **the \
-constraint is the problem, not the growth engine**.
+In all these cases, new structure emerges from **local interactions** and simple rules, not from top down commands.
 
-The correct leverage point is to **directly address the limiting factor**:
-- If market opportunity is limited → create new markets.
-- If resources are finite → improve efficiency or find substitutes.
-- If infrastructure is the bottleneck → invest in capacity.
+### Why Self Organization Matters
 
-### Real-World Examples
+- It allows systems to **adapt, learn, and evolve**.
+- It is the source of creativity, innovation, and resilience.
+- However, it requires **freedom, experimentation, and some disorder**. Too much control kills it.
+- Self organization often leads to **hierarchy**, new levels of organization emerge naturally (e.g., cells, organs, organisms).
 
-- Company growth limited by available talent
-- Population growth constrained by food or water
-- Urban expansion bounded by environmental capacity
+Many managers and governments try to suppress self organization because it feels messy and uncontrollable, but doing so makes systems brittle and less innovative.
 
-> **Key insight:** Look for the constraint before pushing the accelerator. \
-The balancing loop, not the reinforcing loop, needs attention.
+### In the Lab Model
 
-In the first task, watch a business grow until market opportunity is exhausted. \
-In the second task, build a city-growth model where environmental quality is \
-the limiting resource.\
+This simple model shows a basic template of self organization:
+- Two stocks that **co produce** each other (a reinforcing mutual relationship).
+- More of A helps create more of B.
+- More of B helps create more of A.
+
+This mutual reinforcement is a simplified stand in for real bootstrapping processes: startup ecosystems, knowledge networks, soil microbes and plants, or dialects evolving into new languages.
+
+> **Key insight:**  
+> “Self organization is basically a matter of an evolutionary raw material, a highly variable stock of information from which to select, and some consistent selection rules. Out of simple rules of self organization can grow enormous, diversifying crystals of technology, physical structures, organizations, and cultures.”
+
+### In the Lab
+
+The lab moves from ant hill emergence to markets, cities, and immune response.
+
+
+- **Task 1: Ant hill emergence**  
+  Use the finished ant hill graph to explain how local rule constants and repeated worker deposition create global structure without a boss node.
+- **Task 2: Free market pricing**  
+  Finish the market model by adding the missing price formula and reconnecting the signal path.
+- **Task 3: Organic city growth**  
+  Build a city growth model where neighborhoods, amenities, and migration interact from local incentives instead of a single central controller.
+- **Task 4: Immune response**  
+  Build an immune response model with threat stock, local activation, response capacity, and clearance flow.
+
+Self organization is one of the deepest and most hopeful properties of systems, it is the reason life, societies, and economies keep surprising us with new possibilities.
 """
 
-_LIMITS_DEMO = _graph(
+SELF_ORGANIZATION_DEMO = compose_graph(
     nodes=[
-        # Growth expression: 0.3 · rev · max(0, mkt) / 200
-        # Both flows consume the same resource at the same rate.
-        _stock("stock_rev", "Business Revenue",   500, 200, quantity=5,   unit="million"),
-        _stock("stock_mkt", "Market Opportunity",  80,  200, quantity=200, unit="million"),
-        _flow(
-            "flow_1",
-            "Revenue Growth",
-            340,
-            90,
-            bottleneck=0,
-            expression="0.3 * stock_rev * max(0, stock_mkt) / 200",
-            unit="million/step",
+        make_stock_node(
+            "stock_hill",
+            "Ant Hill (nest structure)",
+            400,
+            260,
+            quantity=4,
+            unit="rel. scale",
+            student_tooltip="Emergent structure: no central command node: growth comes from repeated application of simple rules.",
+            visual_theme="mound",
+            fill_cap=80,
         ),
-        _flow(
-            "flow_2",
-            "Market Consumed",
-            340,
+        make_constant_node(
+            "rule_follow",
+            "Local rule: follow pheromone trails",
+            160,
+            90,
+            quantity=1,
+            unit="weight",
+            color=C_AUX,
+            student_tooltip="Purple ‘rule’ constant: ants respond to chemical trails: a local interaction, not a blueprint.",
+        ),
+        make_constant_node(
+            "rule_reinforce",
+            "Local rule: reinforce busy paths",
+            640,
+            90,
+            quantity=1,
+            unit="weight",
+            color=C_AUX,
+            student_tooltip="Positive feedback on well-used routes: amplifies small random beginnings.",
+        ),
+        make_variable_node(
+            "var_deposit",
+            "Structure deposition rate",
+            400,
+            160,
+            expression="(0.14) * (stock_hill) * (rule_follow) + (0.11) * (rule_reinforce)",
+            unit="rel./step",
+            color=C_AUX,
+            student_tooltip="Combines rules with current mound size: bigger colony, more material moved (toy coupling).",
+        ),
+        make_flow_node(
+            "flow_build",
+            "Workers deposit material",
+            400,
+            380,
+            bottleneck=0,
+            expression="max(0, (0) + (var_deposit))",
+            base_flow_expression="0",
+            unit="rel./step",
+            student_tooltip="Flow that builds the visible nest: driven only by local-rule constants and the hill stock.",
+        ),
+    ],
+    edges=[
+        make_feedback_edge("e1", "rule_follow", "var_deposit"),
+        make_feedback_edge("e2", "rule_reinforce", "var_deposit"),
+        make_feedback_edge("e3", "stock_hill", "var_deposit"),
+        make_feedback_edge("e4", "var_deposit", "flow_build", op="add"),
+        make_inflow_edge("e5", "flow_build", "stock_hill"),
+    ],
+)
+
+LESSON_SELF_ORGANIZATION = {
+    "title": "Self-Organization",
+    "order_index": 1,
+    "content_markdown": SELF_ORGANIZATION_CONTENT,
+    "tasks": [
+        {
+            "title": "Task 1: Ant hill emergence",
+            "description": (
+                "Run the ant hill graph 40 to 50 steps. Which **purple rule constants** create structure without a central "
+                "command node? Summarize “local rule → global mound.”"
+            ),
+            "graph": SELF_ORGANIZATION_DEMO,
+            "order_index": 0,
+        },
+        {
+            "title": "Task 2: Free market pricing",
+            "description": (
+                "On a **blank canvas**, sketch a toy market: buyers, sellers, inventory, and a price variable that "
+                "updates from local excess demand (no central planner)."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 1,
+        },
+        {
+            "title": "Task 3: Organic city growth",
+            "description": (
+                "Model **city growth** emerging from neighborhood decisions (zoning, migration, amenities). "
+                "Show at least two stocks interacting without a single “mayor” control loop."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Immune response",
+            "description": (
+                "Build a simplified **immune** diagram: threat stock, localized responses, and clearance flows: highlight "
+                "distributed detection vs centralized coordination."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 3,
+        },
+    ],
+}
+
+
+# ===========================================================================
+# Hierarchy
+# ===========================================================================
+
+HIERARCHY_CONTENT = """\
+
+**Learning objective:** You can recognize hierarchical structure in systems, nested stocks and flows where higher levels support (and are supported by) lower ones, and understand why healthy hierarchies are essential for resilience and function.
+
+Nearly all complex systems are organized as **hierarchies**, systems nested inside larger systems. Cells inside organs, teams inside departments, departments inside companies, companies inside economies, ecosystems inside the biosphere.
+
+This is not an accident. Hierarchy is one of the great systems inventions of nature and human organization.
+
+### The Hora and Tempus Story
+
+The story of two watchmakers:
+- **Tempus** assembled watches from 1,000 tiny parts all at once. Every interruption destroyed his progress.
+- **Hora** built his watches in stable subassemblies (modules). He could pause and resume without losing everything.
+
+Hora’s hierarchical approach was far more resilient and efficient. This illustrates why complex systems almost always evolve as hierarchies.
+
+### Key Principles of Healthy Hierarchy
+
+- Hierarchies evolve **from the bottom up**. Lower levels self organize first.
+- The purpose of the **upper levels** is to **serve** the lower levels, not the other way around.
+- Good hierarchies give subsystems enough **independence** (freedom to self organize) while maintaining necessary coordination and information flow between levels.
+- Information and resources should flow both ways: support downward, feedback and results upward.
+- Pathological hierarchies starve or over control the lower levels, leading to brittleness, inefficiency, or collapse.
+
+### In the Lab Model
+
+This two level model demonstrates a simple healthy hierarchy:
+- A **central stock** (higher level) allocates resources downward to support local operations.
+- **Local stocks** (lower level) use those resources, generate results, and send a return flow (taxes, data, output, loyalty) back upward.
+
+The two way exchange keeps both levels viable and creates overall system stability.
+
+> **Key insight:**  
+> “Hierarchical systems evolve from the bottom up. The purpose of the upper layers of the hierarchy is to serve the purposes of the lower layers.”  
+> Healthy hierarchies balance the welfare, freedoms, and responsibilities of subsystems with the needs of the larger system.
+
+### Why This Matters
+
+Understanding hierarchy helps you see why:
+- Over centralization kills innovation and resilience.
+- Completely independent parts fail to coordinate.
+- Good system design respects natural subsystem boundaries and information flows.
+
+### In the Lab
+
+The lab uses hierarchy stacks to show what changes when you move between levels.
+
+
+- **Task 1: Environmental five level stack**  
+  Use the finished individual to planet hierarchy to trace how flows roll lower level activity into higher level stocks.
+- **Task 2: Biological hierarchy**  
+  Finish the biological hierarchy by reconnecting the missing roll up path.
+- **Task 3: Company hierarchy**  
+  Build a company hierarchy with employee, department, and company stocks plus upward result flows and downward support flows.
+- **Task 4: Global issue ladder**  
+  Build a local to global issue ladder for climate or health.
+
+Mastering hierarchy is crucial for anyone who designs, manages, or intervenes in organizations, governments, or ecosystems.
+"""
+
+HIERARCHY_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "s_ind",
+            "Individual",
+            420,
+            430,
+            quantity=1200,
+            unit="people",
+            student_tooltip="Lowest level: individual people or agents.",
+        ),
+        make_stock_node(
+            "s_comm",
+            "Community",
+            420,
+            350,
+            quantity=240,
+            unit="groups",
+            student_tooltip="Neighborhoods, organizations, or towns: meso level.",
+        ),
+        make_stock_node(
+            "s_cty",
+            "Country",
+            420,
+            270,
+            quantity=48,
+            unit="nation-scale",
+            student_tooltip="National institutions and economy.",
+        ),
+        make_stock_node(
+            "s_cont",
+            "Continent",
+            420,
+            190,
+            quantity=9,
+            unit="macro",
+            student_tooltip="Regional / continental interactions.",
+        ),
+        make_stock_node(
+            "s_planet",
+            "Planet",
+            420,
+            110,
+            quantity=1,
+            unit="global",
+            student_tooltip="Whole-Earth / biosphere view: top of this teaching stack.",
+        ),
+        make_flow_node(
+            "f_up1",
+            "Roll-up to community",
+            220,
+            390,
+            bottleneck=0,
+            expression="(0.03) * (s_ind)",
+            unit="/step",
+            student_tooltip="Aggregation flow: individuals contribute to community-level stock (toy rates).",
+        ),
+        make_flow_node(
+            "f_up2",
+            "Roll-up to country",
+            220,
             310,
             bottleneck=0,
-            expression="0.3 * stock_rev * max(0, stock_mkt) / 200",
-            unit="million/step",
+            expression="(0.04) * (s_comm)",
+            unit="/step",
+        ),
+        make_flow_node(
+            "f_up3",
+            "Roll-up to continent",
+            220,
+            230,
+            bottleneck=0,
+            expression="(0.05) * (s_cty)",
+            unit="/step",
+        ),
+        make_flow_node(
+            "f_up4",
+            "Roll-up to planet",
+            220,
+            150,
+            bottleneck=0,
+            expression="(0.06) * (s_cont)",
+            unit="/step",
         ),
     ],
     edges=[
-        _inflow("edge_1",  "flow_1",    "stock_rev"),
-        _outflow("edge_2", "stock_mkt", "flow_2"),
+        make_outflow_edge("o1", "s_ind", "f_up1"),
+        make_inflow_edge("i1", "f_up1", "s_comm"),
+        make_outflow_edge("o2", "s_comm", "f_up2"),
+        make_inflow_edge("i2", "f_up2", "s_cty"),
+        make_outflow_edge("o3", "s_cty", "f_up3"),
+        make_inflow_edge("i3", "f_up3", "s_cont"),
+        make_outflow_edge("o4", "s_cont", "f_up4"),
+        make_inflow_edge("i4", "f_up4", "s_planet"),
     ],
 )
 
-_LIMITS_CHALLENGE = _graph(
+HIERARCHY_BIO_DEMO = compose_graph(
     nodes=[
-        _stock("stock_1", "City Population",        500, 200, quantity=50,  unit="thousands"),
-        _stock("stock_2", "Environmental Quality",   80,  200, quantity=100, unit="index"),
-        _flow("flow_1",   "Population Growth",      340,  90, bottleneck=0, unit="thousands/step"),
-        _flow("flow_2",   "Environmental Degradation", 340, 310, bottleneck=0, unit="index/step"),
+        make_stock_node("hb_cell", "Cells (billions)", 420, 400, quantity=3.5e12, unit="cells", student_tooltip="Microscopic scale: base of the biological stack."),
+        make_stock_node("hb_org", "Organs & tissues", 420, 310, quantity=78, unit="major", student_tooltip="Meso scale: coordinated tissues."),
+        make_stock_node("hb_body", "Organism", 420, 220, quantity=1, unit="individual", student_tooltip="Whole animal or plant."),
+        make_stock_node("hb_eco", "Ecosystem", 420, 130, quantity=1, unit="landscape", student_tooltip="Populations + environment."),
+        make_flow_node("hb_u1", "Roll-up to organs", 220, 355, bottleneck=0, expression="(0.02) * (hb_cell)", unit="/step"),
+        make_flow_node("hb_u2", "Roll-up to organism", 220, 265, bottleneck=0, expression="(0.04) * (hb_org)", unit="/step"),
+        make_flow_node("hb_u3", "Roll-up to ecosystem", 220, 175, bottleneck=0, expression="(0.05) * (hb_body)", unit="/step"),
     ],
     edges=[
-        _inflow("edge_1",  "flow_1",  "stock_1"),
-        _outflow("edge_2", "stock_2", "flow_2"),
+        make_outflow_edge("hb_o1", "hb_cell", "hb_u1"),
+        make_inflow_edge("hb_i1", "hb_u1", "hb_org"),
+        make_outflow_edge("hb_o2", "hb_org", "hb_u2"),
+        make_inflow_edge("hb_i2", "hb_u2", "hb_body"),
+        make_outflow_edge("hb_o3", "hb_body", "hb_u3"),
+        make_inflow_edge("hb_i3", "hb_u3", "hb_eco"),
     ],
 )
 
-LESSON_LIMITS_TO_GROWTH = {
-    "title": "Limits to Growth",
-    "order_index": 0,
-    "content_markdown": _LIMITS_TO_GROWTH_CONTENT,
+HIERARCHY_COMPANY_DEMO = compose_graph(
+    nodes=[
+        make_stock_node("hc_emp", "Employees", 420, 360, quantity=480, unit="people"),
+        make_stock_node("hc_dep", "Departments", 420, 260, quantity=12, unit="units"),
+        make_stock_node("hc_co", "Company", 420, 160, quantity=1, unit="firm"),
+        make_flow_node("hc_u1", "Teams → departments", 220, 310, bottleneck=0, expression="(0.03) * (hc_emp)", unit="/step"),
+        make_flow_node("hc_u2", "Departments → company", 220, 210, bottleneck=0, expression="(0.06) * (hc_dep)", unit="/step"),
+    ],
+    edges=[
+        make_outflow_edge("hc_o1", "hc_emp", "hc_u1"),
+        make_inflow_edge("hc_i1", "hc_u1", "hc_dep"),
+        make_outflow_edge("hc_o2", "hc_dep", "hc_u2"),
+        make_inflow_edge("hc_i2", "hc_u2", "hc_co"),
+    ],
+)
+
+HIERARCHY_GLOBAL_DEMO = compose_graph(
+    nodes=[
+        make_stock_node("hg_loc", "Local coalitions", 420, 320, quantity=120, unit="groups"),
+        make_stock_node("hg_nat", "National policy", 420, 220, quantity=48, unit="programs"),
+        make_stock_node("hg_int", "International agreements", 420, 120, quantity=9, unit="treaties"),
+        make_flow_node("hg_u1", "Local → national agenda", 220, 270, bottleneck=0, expression="(0.04) * (hg_loc)", unit="/step"),
+        make_flow_node("hg_u2", "National → global deals", 220, 170, bottleneck=0, expression="(0.05) * (hg_nat)", unit="/step"),
+    ],
+    edges=[
+        make_outflow_edge("hg_o1", "hg_loc", "hg_u1"),
+        make_inflow_edge("hg_i1", "hg_u1", "hg_nat"),
+        make_outflow_edge("hg_o2", "hg_nat", "hg_u2"),
+        make_inflow_edge("hg_i2", "hg_u2", "hg_int"),
+    ],
+)
+
+LESSON_HIERARCHY = {
+    "title": "Hierarchy",
+    "order_index": 2,
+    "content_markdown": HIERARCHY_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Business Hits Market Ceiling",
+            "title": "Task 1: Environmental 5-level stack",
             "description": (
-                "A business starts with 5 million in revenue. Its growth rate is proportional "
-                "to both current revenue and remaining market opportunity (200 million total). "
-                "As the market is consumed, growth slows and eventually stops. "
-                "Run 60 steps and observe how growth decelerates as the market is exhausted."
+                "Run the **individual → planet** environmental hierarchy. Explain what behavior is visible "
+                "only when you include higher levels."
             ),
-            "graph": _LIMITS_DEMO,
+            "graph": HIERARCHY_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: City vs Environment",
+            "title": "Task 2: Biological hierarchy",
             "description": (
-                "A city starts with 50,000 people. Environmental quality starts at 100. "
-                "Set expressions on the two flows so that population growth depletes "
-                "environmental quality, and that as quality decreases, growth slows. "
-                "Run 80 steps. What happens to both stocks?"
+                "Run **cell → organ → organism → ecosystem**. Describe one feedback you would miss if you "
+                "only modeled cells."
             ),
-            "graph": _LIMITS_CHALLENGE,
+            "graph": HIERARCHY_BIO_DEMO,
             "order_index": 1,
+        },
+        {
+            "title": "Task 3: Company hierarchy",
+            "description": (
+                "Run **employee → department → company** roll-ups. Give one example of information that should travel "
+                "upward and one resource that should travel downward."
+            ),
+            "graph": HIERARCHY_COMPANY_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Global issue ladder",
+            "description": (
+                "Run **local action → international agreement** for a global issue (climate, health, trade). "
+                "Where is the leverage: bottom-up, top-down, or both?"
+            ),
+            "graph": HIERARCHY_GLOBAL_DEMO,
+            "order_index": 3,
         },
     ],
 }
 
 
-# ---------------------------------------------------------------------------
-# Lesson 7: Tragedy of the Commons
-# ---------------------------------------------------------------------------
-#
-# Fish population with logistic births and two constant-rate fishing fleets.
-# At start: births ≈ 37.5/step, total fishing = 100/step → net = −62.5 → collapse.
+# ===========================================================================
+# Boundaries
+# ===========================================================================
 
-_TRAGEDY_COMMONS_CONTENT = """\
-## Tragedy of the Commons: When Individual Rationality Destroys Shared Resources
+BOUNDARIES_CONTENT = """\
 
-The **Tragedy of the Commons** is one of Meadows' most important archetypes — \
-and one of the most relevant to global challenges today.
+**Learning objective:** You can clearly distinguish **endogenous** variables (inside the model, especially stocks and feedback loops) from **exogenous** ones (outside inputs or constants), and you understand the risks of drawing boundaries too narrowly.
 
-### The Original Story
+One of the most important and frequently overlooked decisions in systems thinking is **where to draw the boundary** of your system. Every model is a deliberate simplification. You decide what is **inside** the system (endogenous) and what is **outside** (exogenous).
 
-In 18th-century England, farmers shared a common grazing field. Each farmer \
-rationally added more cattle to maximise personal gain. Each additional cow \
-added to the farmer's benefit, while the cost — grass depletion — was shared \
-among everyone. The result: every farmer, acting rationally, destroyed the \
-shared resource that all depended on.
+### Endogenous vs Exogenous
 
-### The System Structure
+- **Endogenous** elements inside the model, especially **stocks** and the **feedback loops** that connect them. These are the parts whose behavior the model tries to explain.
+- **Exogenous** elements treated as external inputs: constants, parameters, or driving forces coming from “outside” the system (e.g. population growth rate, market price, government policy, climate).
 
-The archetype has:
-- A **shared stock** (the commons) — fish in an ocean, groundwater, clean air
-- Multiple **actors** each drawing from the stock via outflows
-- A **natural replenishment mechanism** within the stock (often logistic growth)
-- **No feedback loop** connecting each actor's individual extraction rate to \
-  the declining collective resource
+A constant is not “wrong”, it is a **boundary choice**. It means you are assuming that factor does not change in response to what happens inside your model.
 
-When the sum of all extraction rates exceeds the replenishment rate, the \
-commons collapses — even if each actor is behaving "rationally".
+### The Danger of Narrow Boundaries
 
-### Why the System Fails
+Drawing the boundary too narrowly is one of the most common modeling mistakes. When you leave important stocks or slow variables outside:
 
-The key structural flaw: there is **no feedback loop** connecting an individual \
-actor's extraction to the resource state. Each actor perceives personal gain \
-but not collective harm. The commons decays slowly, then rapidly.
+- The model can look stable or sustainable in the short term.
+- In reality, the ignored parts may create dangerous feedback later.
+- You miss delayed effects, unintended consequences, or policy resistance.
 
-### Escaping the Trap
+**Examples:**
+- A company optimizing only its own inventory while ignoring supplier capacity.
+- A city managing traffic without considering how new roads affect urban sprawl.
+- An economy focused on GDP growth while treating natural resources and pollution as purely exogenous.
 
-Meadows identifies three escape routes:
-1. **Privatise the commons** — give each actor their own portion (creates feedback)
-2. **Regulate the commons** — external rules limiting total extraction
-3. **Communicate and self-limit** — actors collectively agree to restrain themselves
+> **Key insight:**  
+> “The boundary of a system is a decision made by the observer… The choice of boundaries is one of the most powerful modeling decisions. You can make a system look good or bad, stable or unstable, simply by where you choose to draw the boundary.”
 
-> **Key insight:** The tragedy isn't caused by greed — it's caused by a missing \
-feedback connection between individual action and shared consequence.
+A good modeler starts with a narrow boundary and then repeatedly asks: “What important stock or loop am I leaving out that could change the behavior in the long run?”
 
-In the first task, two fishing fleets share a fish population. Observe how their \
-combined extraction exceeds natural replenishment, collapsing the fishery. In the \
-second task, build a groundwater commons scenario.\
+### In the Lab
+
+The lab makes the boundary visible, then asks you to widen or shift it.
+
+
+- **Task 1: University system**  
+  Use the finished university boundary graph to separate inside stocks and flows from outside drivers.
+- **Task 2: City vs metro**  
+  Finish the city vs metro boundary model by adding the missing metro stock and commuter connection.
+- **Task 3: Personal to society**  
+  Build nested boundaries for you, family, and society, then add one stock or feedback that appears only when the boundary widens.
+- **Task 4: Watershed vs county**  
+  Build two boundary frames for water pollution: watershed and county line.
+
+**Practical tip:** When reviewing any model (yours or someone else’s), always ask:
+- What is inside the boundary?
+- What important things are left outside?
+- Could bringing one more stock inside change the conclusions dramatically?
+
+Mastering boundaries is a core skill of professional system thinking, it determines whether your model illuminates reality or hides the most important dynamics.
 """
 
-_TRAGEDY_DEMO = _graph(
+BOUNDARIES_DEMO = compose_graph(
     nodes=[
-        # Natural births follow logistic growth: 0.2 · N · (1 − N/800)
-        # At N=500: births ≈ 37.5/step.  Two fleets extract 50 each = 100/step.
-        # Net = −62.5 → fish population collapses.
-        _stock("stock_1", "Fish Population", 350, 220, quantity=500, unit="fish"),
-        _flow(
-            "flow_1",
-            "Natural Births",
-            80,
+        make_comment_node(
+            "frame_univ",
+            "University: inside this boundary",
+            300,
+            160,
+            boundary_mode=True,
+            frame_width=480,
+            frame_height=320,
+        ),
+        make_stock_node(
+            "stock_univ",
+            "University (enrollment)",
+            420,
+            220,
+            quantity=18,
+            unit="k students",
+            student_tooltip="Endogenous stock for this story: people on campus you try to explain with flows.",
+        ),
+        make_constant_node(
+            "c_outside",
+            "National demand for degrees (outside)",
+            160,
+            100,
+            quantity=4.2,
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Exogenous driver: a boundary choice. Drag it away from the cluster to remind yourself it is *outside* this cut of the world.",
+        ),
+        make_variable_node(
+            "v_apps",
+            "Applications (auxiliary)",
+            160,
+            180,
+            expression="(c_outside) * (3.2)",
+            unit="k/yr",
+            color=C_AUX,
+            student_tooltip="Auxiliary: translates outside pressure into application pressure on the campus.",
+        ),
+        make_flow_node(
+            "f_in",
+            "New enrollment",
+            160,
+            280,
+            bottleneck=0,
+            expression="max(0, (0) + (v_apps)) * 0.07",
+            base_flow_expression="0",
+            unit="k/yr",
+            student_tooltip="Inflow: new students: green arrow into the stock.",
+        ),
+        make_flow_node(
+            "f_out",
+            "Graduation & leaving",
+            680,
             220,
             bottleneck=0,
-            expression="0.2 * stock_1 * (1 - stock_1 / 800)",
-            unit="fish/step",
+            expression="0.055 * (stock_univ) + 0.03",
+            base_flow_expression="0",
+            unit="k/yr",
+            student_tooltip="Outflow: people finishing or transferring: red arrow from the stock.",
         ),
-        _flow("flow_2", "Fishing Fleet A", 620, 160, bottleneck=50, unit="fish/step"),
-        _flow("flow_3", "Fishing Fleet B", 620, 280, bottleneck=50, unit="fish/step"),
     ],
     edges=[
-        _inflow("edge_1",  "flow_1",  "stock_1"),
-        _outflow("edge_2", "stock_1", "flow_2"),
-        _outflow("edge_3", "stock_1", "flow_3"),
+        make_feedback_edge("e1", "c_outside", "v_apps"),
+        make_feedback_edge("e2", "v_apps", "f_in", op="add"),
+        make_inflow_edge("e3", "f_in", "stock_univ"),
+        make_outflow_edge("e4", "stock_univ", "f_out"),
     ],
 )
 
-_TRAGEDY_CHALLENGE = _graph(
-    nodes=[
-        _stock("stock_1", "Groundwater Level", 350, 220, quantity=100, unit="meters"),
-        _flow("flow_1",   "Natural Recharge",   80,  220, bottleneck=2, unit="m/step"),
-        _flow("flow_2",   "Farm A Pumping",     620, 160, bottleneck=0, unit="m/step"),
-        _flow("flow_3",   "Farm B Pumping",     620, 280, bottleneck=0, unit="m/step"),
-    ],
-    edges=[
-        _inflow("edge_1",  "flow_1",  "stock_1"),
-        _outflow("edge_2", "stock_1", "flow_2"),
-        _outflow("edge_3", "stock_1", "flow_3"),
-    ],
-)
-
-LESSON_TRAGEDY_OF_COMMONS = {
-    "title": "Tragedy of the Commons",
-    "order_index": 1,
-    "content_markdown": _TRAGEDY_COMMONS_CONTENT,
+LESSON_BOUNDARIES = {
+    "title": "Boundaries",
+    "order_index": 3,
+    "content_markdown": BOUNDARIES_CONTENT,
     "tasks": [
         {
-            "title": "Observe: Fishery Collapse",
+            "title": "Task 1: University system",
             "description": (
-                "A fish population of 500 reproduces logistically (r=0.2, K=800), "
-                "generating ~37 fish per step at equilibrium. Two fishing fleets each "
-                "extract 50 fish per step — together taking 100 per step. "
-                "Run 20 steps and observe the collapse. Then reduce each fleet to 15 "
-                "fish/step and observe what changes."
+                "Define and visualize the **university** boundary using the dashed frame. Label which nodes are "
+                "**endogenous** vs **exogenous** for this cut of the world."
             ),
-            "graph": _TRAGEDY_DEMO,
+            "graph": BOUNDARIES_DEMO,
             "order_index": 0,
         },
         {
-            "title": "Build: Shared Groundwater",
+            "title": "Task 2: City vs metro",
             "description": (
-                "A groundwater aquifer starts at 100 meters. Natural recharge is "
-                "2 meters/step. Set Farm A and Farm B pumping rates so that together "
-                "they exceed recharge — depleting the aquifer. Run 60 steps. "
-                "Then find the extraction rate at which the commons is sustainable."
+                "On a **blank canvas**, draw two frames: **city limits** vs **metropolitan region**. "
+                "List at least one stock that appears only when you widen to the metro boundary."
             ),
-            "graph": _TRAGEDY_CHALLENGE,
+            "graph": EMPTY_GRAPH,
             "order_index": 1,
         },
-    ],
-}
-
-
-# ---------------------------------------------------------------------------
-# Lesson 8: Escalation
-# ---------------------------------------------------------------------------
-#
-# Two stocks grow proportional to each other's size — a coupled reinforcing loop.
-# A_growth = 0.15 · stock_b   (Country A builds up proportional to B's size)
-# B_growth = 0.15 · stock_a   (Country B builds up proportional to A's size)
-# → coupled exponential escalation.
-
-_ESCALATION_CONTENT = """\
-## Escalation: The Arms Race Archetype
-
-The final archetype in this series is **Escalation** — a system structure \
-found in arms races, price wars, corporate advertising battles, and \
-interpersonal conflicts.
-
-### The Structure
-
-Escalation occurs when two actors each perceive the other's level as a \
-threat, and each responds by increasing their own level — which in turn \
-triggers the other's increase.
-
-- Stock A (e.g. Country A's military size)
-- Stock B (e.g. Country B's military size)
-- A's inflow is driven by B's level: *"we must match them"*
-- B's inflow is driven by A's level: *"we must match them"*
-
-Each actor's reinforcing loop feeds the other. The result is **coupled \
-exponential growth** — both stocks spiral upward together.
-
-### Why It's Hard to Escape
-
-Both actors feel justified and defensive. Neither *starts* the escalation \
-intentionally — each is responding rationally to the perceived threat of the \
-other. The system structure itself drives the behaviour, regardless of \
-individual intentions.
-
-### The Escape
-
-Two paths:
-1. **Unilateral de-escalation** — one actor voluntarily reduces their level, \
-   removing the threat signal. Risky, but can work.
-2. **Negotiated mutual reduction** — both actors agree simultaneously to \
-   reduce. Requires communication and trust.
-
-You cannot "win" an escalation without exhausting both sides. The only \
-winning move is to change the system structure.
-
-### Real-World Examples
-
-- Cold War nuclear arms race
-- Competing companies in advertising or pricing wars
-- Tariff escalation between trading nations
-- Social media outrage cycles
-
-> **Key insight:** Identify the feedback loop that connects your opponent's \
-state to your own action. Breaking that connection — or replacing it with a \
-cooperative signal — is the structural fix.
-
-In the first task, two countries continuously build forces in response to \
-each other. In the second task, model an advertising war between two companies.\
-"""
-
-_ESCALATION_DEMO = _graph(
-    nodes=[
-        _stock("stock_a", "Country A Forces", 140, 200, quantity=100, unit="units"),
-        _stock("stock_b", "Country B Forces", 620, 200, quantity=80,  unit="units"),
-        _flow(
-            "flow_a",
-            "Country A Buildup",
-            80,
-            360,
-            bottleneck=0,
-            expression="0.15 * stock_b",
-            unit="units/step",
-        ),
-        _flow(
-            "flow_b",
-            "Country B Buildup",
-            560,
-            360,
-            bottleneck=0,
-            expression="0.15 * stock_a",
-            unit="units/step",
-        ),
-    ],
-    edges=[
-        _inflow("edge_1", "flow_a", "stock_a"),
-        _inflow("edge_2", "flow_b", "stock_b"),
-    ],
-)
-
-_ESCALATION_CHALLENGE = _graph(
-    nodes=[
-        _stock("stock_a", "Company A Market Share", 140, 200, quantity=40, unit="%"),
-        _stock("stock_b", "Company B Market Share", 620, 200, quantity=30, unit="%"),
-        _flow("flow_a",   "Company A Ad Effect",     80,  360, bottleneck=0, unit="pts/step"),
-        _flow("flow_b",   "Company B Ad Effect",    560,  360, bottleneck=0, unit="pts/step"),
-    ],
-    edges=[
-        _inflow("edge_1", "flow_a", "stock_a"),
-        _inflow("edge_2", "flow_b", "stock_b"),
-    ],
-)
-
-LESSON_ESCALATION = {
-    "title": "Escalation",
-    "order_index": 2,
-    "content_markdown": _ESCALATION_CONTENT,
-    "tasks": [
         {
-            "title": "Observe: Arms Race",
+            "title": "Task 3: Personal to society",
             "description": (
-                "Country A starts with 100 military units; Country B with 80. "
-                "Each country's buildup rate equals 0.15 × the opponent's current size. "
-                "Run 40 steps and observe the coupled exponential escalation. "
-                "Then change one country's rate to 0 and observe what happens."
+                "Sketch nested boundaries for **you → family → society**. Identify one feedback visible only when the "
+                "outer societal boundary is included."
             ),
-            "graph": _ESCALATION_DEMO,
-            "order_index": 0,
+            "graph": EMPTY_GRAPH,
+            "order_index": 2,
         },
         {
-            "title": "Build: Advertising War",
+            "title": "Task 4: Ecosystem boundary shift",
             "description": (
-                "Company A holds 40% market share; Company B holds 30%. "
-                "Each company's advertising spend is proportional to the competitor's "
-                "current share. Add flow expressions to model this escalation dynamic. "
-                "Run 30 steps. What does de-escalation look like in this model?"
+                "Compare modeling a **watershed** vs a **county line** for water pollution. "
+                "How does moving the boundary change which stocks and loops belong inside the model?"
             ),
-            "graph": _ESCALATION_CHALLENGE,
-            "order_index": 1,
+            "graph": EMPTY_GRAPH,
+            "order_index": 3,
         },
     ],
 }
 
 
 # =============================================================================
-# Section specs — assembled from lesson constants above
+# Traps and opportunities: book-rooted example modules
+# =============================================================================
+
+# ===========================================================================
+# Example #1: Growth, limits, and the shape of the curve
+# ===========================================================================
+
+EXAMPLES_1_CONTENT = """\
+
+**Learning objective:** You can describe how a reinforcing growth process collides with a limiting stock or balancing loop to produce the classic S shaped (logistic) curve, and you can spot the most frequent mistakes people and organizations make in such situations.
+
+Pure exponential growth is rare in the real world. A reinforcing loop (the “engine of growth”) almost always runs into some kind of **limit**, a second stock that is being depleted, a balancing loop that grows stronger as the system expands, or a physical carrying capacity. The result is the famous **S shaped curve**: slow start, rapid exponential rise, then a clear bending and leveling off (or even decline) as the limit is approached.
+
+### The Basic Pattern
+
+1. **Reinforcing phase**, the growth engine works beautifully. More leads to more.
+2. **Approaching the limit**, the second stock (market size, clean water, public trust, fertile soil, etc.) starts to thin.
+3. **Slowing and plateau**, growth rate drops even though effort stays high. The curve bends.
+4. **Possible outcomes**, stable equilibrium near carrying capacity, or overshoot and collapse if delays or over investment are present.
+
+This is called “**limits to growth**”, not a limit to effort or ambition, but a structural limit in the system.
+
+### Most Common Mistakes (and How to Avoid Them)
+
+Roughly half of all policy and modeling failures around growth happen because people misunderstand this pattern. Here are the four most frequent mistakes:
+
+1. **Mistake: “The limit is someone else’s problem” (narrow boundary)**  
+   People treat the limiting stock as exogenous (a constant or external driver) instead of making it endogenous.  
+   **Solution:** Always ask “What second stock is being consumed or degraded by our growth?” Bring it inside the model as a stock with its own dynamics.
+
+2. **Mistake: “We just need to push harder” (fighting the symptom)**  
+   When growth slows, the instinctive response is to strengthen the reinforcing loop (more advertising, more extraction, more subsidies). This accelerates depletion of the limit and often causes overshoot.  
+   **Solution:** When the S curve appears, shift attention from the growth engine to the limiting factor. Strengthen the balancing loop or replenish the second stock.
+
+3. **Mistake: Ignoring delays**  
+   Because effects are delayed, the slowdown feels sudden. Decision makers panic and over correct.  
+   **Solution:** Explicitly add delays in the model and practice responding more slowly and thoughtfully when the curve starts bending.
+
+4. **Mistake: Believing the steep middle part of the curve will last forever**  
+   Headlines and short term success stories focus only on the explosive middle section and declare “this growth is unstoppable.”  
+   **Solution:** Always look for the approaching limit early. The earlier you detect the second stock, the easier it is to manage.
+
+> **Key insight:**  
+> “A reinforcing growth loop will produce exponential growth for a while, but it cannot continue forever. Sooner or later it will run into a balancing loop or a physical limit. The resulting behavior is the classic S shaped curve.”
+
+### In the Lab
+
+The lab uses the same S curve structure in business, population, technology, and pollution examples.
+
+
+- **Task 1: Business vs market limit**  
+  Use the finished business growth graph to identify the growth engine, the market ceiling, and the slow fast slow S curve phases.
+- **Task 2: Population and resources**  
+  Finish the population resource model by completing the headroom limited growth path.
+- **Task 3: Technology adoption**  
+  Build a technology adoption S curve with adopters as a stock, new adoption as inflow, and saturation as the limiting headroom.
+- **Task 4: Pollution budget**  
+  Build a pollution accumulation model where remaining assimilative capacity or budget limits further growth.
+
+Remember: finding the second stock *before* you max out the first one is the systems thinker’s most powerful move in any sustainability conversation.
+"""
+
+LIMITS_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "stock_pop",
+            "Population",
+            420,
+            260,
+            quantity=8,
+            unit="k",
+            student_tooltip="Primary stock: watch the chart for slow fast slow S-shape as the limit bites.",
+        ),
+        make_constant_node(
+            "constant_cap",
+            "Carrying capacity (niches & resources)",
+            420,
+            90,
+            quantity=95,
+            unit="k",
+            color=C_AUX,
+            student_tooltip="Purple ceiling: food, space, institutions. The reinforcing loop runs into this bound.",
+        ),
+        make_flow_node(
+            "flow_net",
+            "Net inflow (births − deaths)",
+            140,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (var_g))",
+            base_flow_expression="0",
+            unit="k/step",
+            student_tooltip="Green inflow: driven by the orange logistic term: steep early, flat late.",
+        ),
+        make_variable_node(
+            "var_g",
+            "Logistic growth (reinforcing × headroom)",
+            280,
+            175,
+            expression="(0.055) * (stock_pop) * max(0, (constant_cap) - (stock_pop))",
+            loop_id="loop_s",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+            student_tooltip="Orange (R): growth × remaining room below carrying capacity: textbook limits-to-growth structure.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("e1", "flow_net", "stock_pop"),
+        make_feedback_edge("e2", "stock_pop", "var_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("e3", "constant_cap", "var_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("e4", "var_g", "flow_net", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop(
+            "loop_s",
+            "stock_pop",
+            "var_g",
+            "flow_net",
+            ["e2", "e3", "e4"],
+            k=0.055,
+            polarity="positive",
+            growth_limit_id="constant_cap",
+        )
+    ],
+)
+
+LIMITS_BUSINESS_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "lb_r",
+            "Quarterly revenue",
+            420,
+            260,
+            quantity=6,
+            unit="M$",
+            student_tooltip="Stock: revenue: grows quickly mid-curve then bends toward the market ceiling.",
+        ),
+        make_constant_node(
+            "lb_cap",
+            "Addressable market ceiling",
+            420,
+            90,
+            quantity=110,
+            unit="M$",
+            color=C_AUX,
+            student_tooltip="Purple limit: total spending you can realistically capture.",
+        ),
+        make_flow_node(
+            "lb_f",
+            "Net revenue growth",
+            140,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (lb_g))",
+            base_flow_expression="0",
+            unit="M$/q",
+            student_tooltip="Inflow: growth term slows automatically as you approach the ceiling.",
+        ),
+        make_variable_node(
+            "lb_g",
+            "Headroom-limited growth",
+            280,
+            175,
+            expression="(0.07) * (lb_r) * max(0, (lb_cap) - (lb_r))",
+            loop_id="lb_l",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("lb_e1", "lb_f", "lb_r"),
+        make_feedback_edge("lb_e2", "lb_r", "lb_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lb_e3", "lb_cap", "lb_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lb_e4", "lb_g", "lb_f", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop("lb_l", "lb_r", "lb_g", "lb_f", ["lb_e2", "lb_e3", "lb_e4"], k=0.07, polarity="positive", growth_limit_id="lb_cap")
+    ],
+)
+
+LIMITS_TECH_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "lt_u",
+            "Adopters (installed base)",
+            420,
+            260,
+            quantity=4,
+            unit="% HH",
+            student_tooltip="Stock: households using the tech: classic adoption S curve.",
+        ),
+        make_constant_node(
+            "lt_cap",
+            "Saturation (100% feasible)",
+            420,
+            90,
+            quantity=100,
+            unit="%",
+            color=C_AUX,
+        ),
+        make_flow_node(
+            "lt_f",
+            "New adoption / period",
+            140,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (lt_g))",
+            base_flow_expression="0",
+            unit="%/step",
+        ),
+        make_variable_node(
+            "lt_g",
+            "Diffusion × headroom",
+            280,
+            175,
+            expression="(0.055) * (lt_u) * max(0, (lt_cap) - (lt_u))",
+            loop_id="lt_l",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("lt_e1", "lt_f", "lt_u"),
+        make_feedback_edge("lt_e2", "lt_u", "lt_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lt_e3", "lt_cap", "lt_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lt_e4", "lt_g", "lt_f", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop("lt_l", "lt_u", "lt_g", "lt_f", ["lt_e2", "lt_e3", "lt_e4"], k=0.055, polarity="positive", growth_limit_id="lt_cap")
+    ],
+)
+
+LIMITS_POLLUTION_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "lp_p",
+            "Cumulative emissions (atm.)",
+            420,
+            260,
+            quantity=180,
+            unit="Gt",
+            student_tooltip="Stock: pollution accumulated: growth slows as remaining carbon budget shrinks.",
+        ),
+        make_constant_node(
+            "lp_cap",
+            "Remaining budget (1.5 °C path)",
+            420,
+            90,
+            quantity=600,
+            unit="Gt",
+            color=C_AUX,
+            student_tooltip="Purple ceiling: stylized total budget: S curve emerges as headroom closes.",
+        ),
+        make_flow_node(
+            "lp_f",
+            "Annual emissions",
+            140,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (lp_g))",
+            base_flow_expression="0",
+            unit="Gt/yr",
+        ),
+        make_variable_node(
+            "lp_g",
+            "Emissions × headroom",
+            280,
+            175,
+            expression="(0.045) * (lp_p) * max(0, (lp_cap) - (lp_p))",
+            loop_id="lp_l",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("lp_e1", "lp_f", "lp_p"),
+        make_feedback_edge("lp_e2", "lp_p", "lp_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lp_e3", "lp_cap", "lp_g", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("lp_e4", "lp_g", "lp_f", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop("lp_l", "lp_p", "lp_g", "lp_f", ["lp_e2", "lp_e3", "lp_e4"], k=0.045, polarity="positive", growth_limit_id="lp_cap")
+    ],
+)
+
+LESSON_EXAMPLES_1 = {
+    "title": "Limits to Growth and the S-Curve",
+    "order_index": 0,
+    "content_markdown": EXAMPLES_1_CONTENT,
+    "tasks": [
+        {
+            "title": "Task 1: Business vs market limit",
+            "description": (
+                "Run the **business revenue** model 70+ steps. Label the **slow fast slow** phases and identify the "
+                "purple **market ceiling**."
+            ),
+            "graph": LIMITS_BUSINESS_DEMO,
+            "order_index": 0,
+        },
+        {
+            "title": "Task 2: Population / resources",
+            "description": (
+                "Run the **population / carrying capacity** logistic. Move the capacity constant and describe how the "
+                "plateau shifts."
+            ),
+            "graph": LIMITS_DEMO,
+            "order_index": 1,
+        },
+        {
+            "title": "Task 3: Technology adoption",
+            "description": (
+                "Simulate **technology adoption** to saturation. Where on the chart is the **acceleration** phase?"
+            ),
+            "graph": LIMITS_TECH_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Pollution accumulation",
+            "description": (
+                "Run the **pollution vs budget** model. Explain how an S-shape can appear even for something harmful "
+                "when remaining **headroom** shrinks."
+            ),
+            "graph": LIMITS_POLLUTION_DEMO,
+            "order_index": 3,
+        },
+    ],
+}
+
+
+# ===========================================================================
+# Example #2: Commons, rivalry, escalation
+# ===========================================================================
+
+EXAMPLES_2_CONTENT = """\
+
+**Learning objective:** You can recognize two classic system structures, the **tragedy of the commons** (shared resource being overused) and **escalation** (two reinforcing loops locked in mutual response), and identify the most frequent mistakes that make these situations worse.
+
+System traps are structures that produce undesirable behavior even when everyone is acting rationally. Two of the most common and destructive traps are the **tragedy of the commons** and **escalation**.
+
+### Part A: Tragedy of the Commons (Shared Resource Trap)
+
+When many independent actors can withdraw from a single shared stock (fishery, pasture, groundwater, atmosphere, public roads), each person’s rational move is to take a little more. The result is collective overuse and eventual collapse of the resource.
+
+The reinforcing loop is: “I take more, my benefit increases.”  
+The missing balancing loop is a strong enough limit or rule on total withdrawals.
+
+### Part B: Escalation (Arms Race Trap)
+
+Escalation is a pair of reinforcing loops locked together:
+- Side A increases its effort because Side B increased.
+- Side B increases its effort because Side A increased.
+
+Neither side “wants” the race, yet the structure keeps driving both upward (arms races, price wars, social media outrage cycles, tariff wars). The classic phrase is “We must not fall behind.”
+
+### Most Common Mistakes (and How to Fix Them)
+
+These two traps cause enormous real world problems. Here are the four most frequent mistakes and the systems level solutions:
+
+1. **Mistake: “It’s the other person’s fault” (blaming individuals instead of the structure)**  
+   People focus on greed, selfishness, or aggression instead of seeing the system trap.  
+   **Solution:** Redesign the structure, add rules, boundaries, or feedback that makes the rational choice also the collectively good choice.
+
+2. **Mistake: Treating the shared resource as infinite or exogenous**  
+   The resource is left outside the model as a constant, so depletion is invisible until it’s too late.  
+   **Solution:** Make the shared stock **endogenous** (inside the model) with its own regeneration rate and visible depletion dynamics.
+
+3. **Mistake: Trying to “win” the escalation**  
+   Each side responds symmetrically (“they raised tariffs, so we raise tariffs”). This only accelerates the spiral.  
+   **Solution:** Break the reinforcing loop by changing the rules, unilateral de escalation, treaties, third party mediation, or removing the “threat signal” that triggers the other side.
+
+4. **Mistake: Relying only on moral appeals or education**  
+   Asking people to “use less” or “be reasonable” rarely works when the incentive structure rewards overuse or escalation.  
+   **Solution:** Change the incentives and rules of the game (quotas, privatization with responsibility, clear property rights, or mutual disarmament agreements).
+
+> **Key insight:**  
+> “The tragedy of the commons arises when there is a shared resource with no rules or enforcement limiting access. Escalation is a pair of reinforcing loops in which each actor’s action is a response to the other’s. In both cases the system structure, not the character of the players, produces the problem.”
+
+### In the Lab
+
+
+- **Task 1: Overgrazing pasture**  
+  Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.
+- **Task 2: Ocean overfishing**  
+  Finish the fishery commons model by completing the missing private incentive path.
+- **Task 3: City air pollution**  
+  Build an urban air commons model with clean air as shared stock and private emissions as drains.
+- **Task 4: Public road traffic**  
+  Build a road capacity commons model where individual route choices create collective congestion.
+
+- **Task 1: Arms race**  
+  Use the finished arms race graph to trace the two cross reinforcing buildup paths.
+- **Task 2: Price war**  
+  Finish the price war model by completing the missing cross response path.
+- **Task 3: Social media outrage**  
+  Build a two community outrage model with mutual reaction signals and one intervention that weakens escalation.
+- **Task 4: Advertising competition**  
+  Build an advertising arms race model with rival attention or ad spend stocks and cross response flows.
+
+**Practical takeaway:**  
+Once you see these traps, you stop asking “Who is to blame?” and start asking “How can we change the structure?” That single shift is one of the most powerful moves in systems thinking.
+"""
+TRAGEDY_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "stock_p",
+            "Shared Pasture (grass)",
+            460,
+            280,
+            quantity=480,
+            unit="index",
+            student_tooltip="Common grass stock: everyone’s cattle eat here: watch the fill shrink when herds explode.",
+            visual_theme="grass",
+            fill_cap=600,
+        ),
+        make_stock_node(
+            "stock_h",
+            "Total cattle (all farmers)",
+            460,
+            120,
+            quantity=38,
+            unit="scaled herds",
+            student_tooltip="All herds combined. Three orange farmer loops each push expansion: together they can overwhelm the commons.",
+        ),
+        make_constant_node(
+            "constant_K",
+            "Carrying capacity (grass)",
+            720,
+            360,
+            quantity=520,
+            unit="index",
+            color=C_AUX,
+            loop_id="loop_p",
+            loop_role="goal",
+            fb_type="balancing",
+            student_tooltip="Ecological ceiling: teal balancing loop tries to regrow grass toward this when it is low.",
+        ),
+        make_variable_node(
+            "var_pd",
+            "Grass deficit",
+            720,
+            260,
+            expression="(stock_p < constant_K ? (constant_K - stock_p) : 0)",
+            loop_id="loop_p",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Gap between actual grass and healthy carrying capacity.",
+        ),
+        make_variable_node(
+            "var_pc",
+            "Regrowth processes",
+            600,
+            200,
+            expression="(max(0, (var_pd))) / (7)",
+            loop_id="loop_p",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Rain, rest, recovery: balancing pressure that fights overgrazing.",
+        ),
+        make_flow_node(
+            "flow_reg",
+            "Grass regrowth (ecology)",
+            600,
+            340,
+            bottleneck=0,
+            expression="max(0, (0) + (var_pc))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Teal balancing inflow: ecosystem pushes grass back when depleted.",
+        ),
+        make_flow_node(
+            "flow_graze",
+            "Total grazing pressure",
+            240,
+            280,
+            bottleneck=0,
+            expression="(0.048) * (stock_h) * ((stock_p) / (480) + 0.02)",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Red outflow: many animals × available grass: the commons drain.",
+        ),
+        make_variable_node(
+            "var_f1",
+            "Farmer 1: expand herd (R)",
+            120,
+            100,
+            expression="(0.037) * (stock_h)",
+            loop_id="loop_h1",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+            student_tooltip="Farmer 1’s private loop: more cattle → more income → add cattle.",
+        ),
+        make_variable_node(
+            "var_f2",
+            "Farmer 2: expand herd (R)",
+            360,
+            100,
+            expression="(0.037) * (stock_h)",
+            loop_id="loop_h2",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+            student_tooltip="Farmer 2: same rational incentive, same shared pasture.",
+        ),
+        make_variable_node(
+            "var_f3",
+            "Farmer 3: expand herd (R)",
+            600,
+            100,
+            expression="(0.036) * (stock_h)",
+            loop_id="loop_h3",
+            loop_role="reinforcingMultiplier",
+            fb_type="reinforcing",
+            persistent=True,
+            reinforcing_text_only=True,
+            color=C_REINFORCING,
+            student_tooltip="Farmer 3: together the three loops sum to strong herd growth.",
+        ),
+        make_flow_node(
+            "flow_herd",
+            "Herd expansion (all farmers)",
+            360,
+            120,
+            bottleneck=0,
+            expression="max(0, max(0, max(0, (0) + (var_f1)) + (var_f2)) + (var_f3))",
+            base_flow_expression="0",
+            unit="units/step",
+            student_tooltip="Total new cattle per step from all three reinforcing farmer loops.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("e_pr", "flow_reg", "stock_p"),
+        make_outflow_edge("e_pg", "stock_p", "flow_graze"),
+        make_inflow_edge("e_hin", "flow_herd", "stock_h"),
+        make_feedback_edge("ek2", "constant_K", "var_pd", fb_type="balancing"),
+        make_feedback_edge("ek3", "stock_p", "var_pd", fb_type="balancing"),
+        make_feedback_edge("ek4", "var_pd", "var_pc", fb_type="balancing"),
+        make_feedback_edge("ek5", "var_pc", "flow_reg", op="add", fb_type="balancing"),
+        make_feedback_edge("h1a", "stock_h", "var_f1", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("h1b", "var_f1", "flow_herd", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("h2a", "stock_h", "var_f2", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("h2b", "var_f2", "flow_herd", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("h3a", "stock_h", "var_f3", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("h3b", "var_f3", "flow_herd", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "loop_p",
+            "stock_p",
+            "constant_K",
+            "var_pd",
+            "var_pc",
+            "flow_reg",
+            ["ek2", "ek3", "ek4", "ek5"],
+            boundary_type="lower",
+            goal_value=520,
+            adjustment_time=7,
+        ),
+        make_reinforcing_loop(
+            "loop_h1", "stock_h", "var_f1", "flow_herd", ["h1a", "h1b"], k=0.037, polarity="positive"
+        ),
+        make_reinforcing_loop(
+            "loop_h2", "stock_h", "var_f2", "flow_herd", ["h2a", "h2b"], k=0.037, polarity="positive"
+        ),
+        make_reinforcing_loop(
+            "loop_h3", "stock_h", "var_f3", "flow_herd", ["h3a", "h3b"], k=0.036, polarity="positive"
+        ),
+    ],
+)
+
+ESCALATION_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "stock_a",
+            "Country A Military Power",
+            160,
+            220,
+            quantity=100,
+            unit="index",
+            student_tooltip="Side A capability: rises when leaders perceive threat from B.",
+        ),
+        make_stock_node(
+            "stock_b",
+            "Country B Military Power",
+            640,
+            220,
+            quantity=88,
+            unit="index",
+            student_tooltip="Side B capability: mirrors A: classic escalation structure.",
+        ),
+        make_variable_node(
+            "var_a",
+            "A’s buildup pressure ∝ B’s power",
+            100,
+            300,
+            expression="(0.15) * (stock_b)",
+            color=C_REINFORCING,
+            student_tooltip="Orange link from B: the stronger B looks, the faster A tries to catch up.",
+        ),
+        make_variable_node(
+            "var_b",
+            "B’s buildup pressure ∝ A’s power",
+            700,
+            300,
+            expression="(0.15) * (stock_a)",
+            color=C_REINFORCING,
+            student_tooltip="Orange link from A: symmetric fear: mutual reinforcement without anyone ‘wanting’ war.",
+        ),
+        make_flow_node(
+            "flow_a",
+            "Country A buildup",
+            100,
+            380,
+            bottleneck=0,
+            expression="max(0, (0) + (var_a))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow to A from perceived gap vs rival: inspect the chart for runaway growth.",
+        ),
+        make_flow_node(
+            "flow_b",
+            "Country B buildup",
+            700,
+            380,
+            bottleneck=0,
+            expression="max(0, (0) + (var_b))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Inflow to B: try setting one side’s multiplier to zero to test de-escalation.",
+        ),
+    ],
+    edges=[
+        make_feedback_edge("ea1", "stock_b", "var_a", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("ea2", "var_a", "flow_a", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("eb1", "stock_a", "var_b", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("eb2", "var_b", "flow_b", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_inflow_edge("edge_1", "flow_a", "stock_a"),
+        make_inflow_edge("edge_2", "flow_b", "stock_b"),
+    ],
+)
+
+TRAGEDY_FISHERY_ALMOST = make_almost_done_graph(
+    TRAGEDY_DEMO,
+    note=(
+        "Almost done: this is the ocean-fishery version of the commons pattern. "
+        "Finish the missing private incentive formula/links so fleet growth can drain the shared fish stock."
+    ),
+)
+for _node in TRAGEDY_FISHERY_ALMOST["nodes"]:
+    _label = str(_node.get("label", ""))
+    _tooltip = str(_node.get("student_tooltip", ""))
+    replacements = {
+        "Shared Pasture (grass)": "Ocean fish biomass",
+        "Total cattle (all farmers)": "Total fishing fleet effort",
+        "Carrying capacity (grass)": "Safe fish biomass",
+        "Grass deficit": "Fish recovery gap",
+        "Regrowth processes": "Fish reproduction",
+        "Grass regrowth (ecology)": "Fish stock regeneration",
+        "Total grazing pressure": "Total catch pressure",
+        "Farmer 1: expand herd (R)": "Fleet 1: add boats (R)",
+        "Farmer 2: expand herd (R)": "Fleet 2: add boats (R)",
+        "Farmer 3: expand herd (R)": "Fleet 3: add boats (R)",
+        "Herd expansion (all farmers)": "Fleet expansion",
+    }
+    for old, new in replacements.items():
+        _label = _label.replace(old, new)
+        _tooltip = _tooltip.replace(old, new).replace("grass", "fish").replace("cattle", "boats").replace("pasture", "fishery")
+    _node["label"] = _label
+    _node["student_tooltip"] = _tooltip
+
+ESCALATION_PRICE_WAR_ALMOST = make_almost_done_graph(
+    ESCALATION_DEMO,
+    note=(
+        "Almost done: this is the price war version of escalation. "
+        "Finish the missing cross response formula/links so each firm reacts to the other firm's discount pressure."
+    ),
+)
+for _node in ESCALATION_PRICE_WAR_ALMOST["nodes"]:
+    _label = str(_node.get("label", ""))
+    _tooltip = str(_node.get("student_tooltip", ""))
+    replacements = {
+        "Country A Military Power": "Company A discount pressure",
+        "Country B Military Power": "Company B discount pressure",
+        "A’s buildup pressure ∝ B’s power": "A reacts to B's discounts",
+        "B’s buildup pressure ∝ A’s power": "B reacts to A's discounts",
+        "Country A buildup": "Company A price cuts",
+        "Country B buildup": "Company B price cuts",
+    }
+    for old, new in replacements.items():
+        _label = _label.replace(old, new)
+    _tooltip = (
+        _tooltip.replace("Side A capability", "Company A discount pressure")
+        .replace("Side B capability", "Company B discount pressure")
+        .replace("Country A", "Company A")
+        .replace("Country B", "Company B")
+        .replace("B looks", "B discounts")
+        .replace("A tries to catch up", "A cuts prices")
+        .replace("rival", "competitor")
+        .replace("de-escalation", "ending the price war")
+    )
+    _node["label"] = _label
+    _node["student_tooltip"] = _tooltip
+
+LESSON_EXAMPLES_2 = {
+    "title": "Tragedy of the Commons and Escalation",
+    "order_index": 1,
+    "content_markdown": EXAMPLES_2_CONTENT,
+    "tasks": [
+        {
+            "title": "Commons: Task 1: Overgrazing pasture",
+            "description": (
+                "Simulate the **shared pasture** commons. Identify the **deep blue grass stock**, **teal regrowth** loop, "
+                "and **orange farmer** loops. Explain overgrazing as a structural outcome."
+            ),
+            "graph": TRAGEDY_DEMO,
+            "order_index": 0,
+        },
+        {
+            "title": "Commons: Task 2: Overfishing the ocean",
+            "description": (
+                "Re-interpret the same diagram as **fish biomass** vs **fishing fleets**. "
+                "Write 2 to 3 sentences on how parallel private incentives deplete a mobile commons."
+            ),
+            "graph": TRAGEDY_DEMO,
+            "order_index": 1,
+        },
+        {
+            "title": "Commons: Task 3: City air pollution",
+            "description": (
+                "Map the commons structure to **urban air quality**: name the shared stock, the private **emissions** pressures, "
+                "and one **balancing** process (e.g., wind dispersion, regulation) you could model next."
+            ),
+            "graph": TRAGEDY_DEMO,
+            "order_index": 2,
+        },
+        {
+            "title": "Commons: Task 4: Public road traffic jam",
+            "description": (
+                "Explain **road capacity** as a commons and **route choice** as reinforcing private use. "
+                "Produce one policy lever (pricing, transit, coordination) that changes the structure."
+            ),
+            "graph": TRAGEDY_DEMO,
+            "order_index": 3,
+        },
+        {
+            "title": "Escalation: Task 1: Arms race",
+            "description": (
+                "Run the **two-country escalation** model ~50 to 70 steps. Identify the **orange cross-links** and predict "
+                "long-run behavior if neither side changes the rules."
+            ),
+            "graph": ESCALATION_DEMO,
+            "order_index": 4,
+        },
+        {
+            "title": "Escalation: Task 2: Price war",
+            "description": (
+                "Relabel the escalation stocks mentally as **Company A vs B price aggression** (or discount depth). "
+                "How would a **third-party platform** or **collusion guardrail** weaken the loop?"
+            ),
+            "graph": ESCALATION_DEMO,
+            "order_index": 5,
+        },
+        {
+            "title": "Escalation: Task 3: Social media outrage",
+            "description": (
+                "Map the model to **outrage intensity** on two communities feeding each other. "
+                "Name one intervention that removes the **threat signal** or slows reaction delay."
+            ),
+            "graph": ESCALATION_DEMO,
+            "order_index": 6,
+        },
+        {
+            "title": "Escalation: Task 4: Advertising competition",
+            "description": (
+                "Interpret the stocks as **rival ad spend** or **attention capture**. "
+                "Explain why both sides can rationally climb together even when total profit falls."
+            ),
+            "graph": ESCALATION_DEMO,
+            "order_index": 7,
+        },
+    ],
+}
+
+
+RESILIENCE_CITY_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "city_todo",
+            "Almost done: finish two details. Add the recovery formula and reconnect the missing information links so municipal capacity helps employment recover.",
+            20,
+            20,
+        ),
+        make_stock_node(
+            "city_jobs",
+            "Employment level",
+            420,
+            260,
+            quantity=64,
+            unit="index",
+            student_tooltip="Stock: jobs in the city after a crisis.",
+        ),
+        make_stock_node(
+            "city_capacity",
+            "Municipal capacity buffer",
+            650,
+            260,
+            quantity=42,
+            unit="index",
+            student_tooltip="Stock: fiscal and organizational slack that can support recovery.",
+        ),
+        make_flow_node(
+            "city_loss",
+            "Crisis job losses",
+            720,
+            390,
+            bottleneck=7,
+            unit="index/step",
+            student_tooltip="Outflow: the shock that reduces employment.",
+        ),
+        make_flow_node(
+            "city_recovery",
+            "Recovery programs",
+            160,
+            260,
+            bottleneck=0,
+            expression="",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Finish this flow: it should use the recovery effort variable.",
+        ),
+        make_constant_node(
+            "city_goal",
+            "Target employment",
+            420,
+            80,
+            quantity=86,
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Goal: where the city wants employment to recover.",
+        ),
+        make_variable_node(
+            "city_gap",
+            "Employment recovery gap",
+            420,
+            170,
+            expression="(city_jobs < city_goal ? (city_goal - city_jobs) : 0)",
+            unit="index",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "city_effort",
+            "Recovery effort (finish)",
+            160,
+            170,
+            expression="",
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Add a formula using city_gap and city_capacity.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("city_e1", "city_recovery", "city_jobs"),
+        make_outflow_edge("city_e2", "city_jobs", "city_loss"),
+        make_feedback_edge("city_e3", "city_goal", "city_gap"),
+        make_feedback_edge("city_e4", "city_jobs", "city_gap"),
+    ],
+)
+
+SELF_ORG_MARKET_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "market_todo",
+            "Almost done: add the price adjustment formula and reconnect local demand and supply signals. There should be no central planner node.",
+            20,
+            20,
+        ),
+        make_stock_node(
+            "market_inventory",
+            "Available inventory",
+            420,
+            260,
+            quantity=54,
+            unit="units",
+            student_tooltip="Stock: goods available in the market.",
+        ),
+        make_flow_node(
+            "market_supply",
+            "Seller restocking",
+            160,
+            260,
+            bottleneck=8,
+            unit="units/step",
+            student_tooltip="Inflow: decentralized seller response.",
+        ),
+        make_flow_node(
+            "market_sales",
+            "Buyer purchases",
+            700,
+            260,
+            bottleneck=0,
+            expression="max(0, (0) + (market_demand))",
+            base_flow_expression="0",
+            unit="units/step",
+            student_tooltip="Outflow: purchases driven by local demand.",
+        ),
+        make_constant_node(
+            "market_base_demand",
+            "Local buyer interest",
+            640,
+            90,
+            quantity=9,
+            unit="index",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "market_price",
+            "Price signal (finish)",
+            420,
+            90,
+            expression="",
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Finish this: price should respond to excess demand or low inventory.",
+        ),
+        make_variable_node(
+            "market_demand",
+            "Demand after price",
+            620,
+            170,
+            expression="max(0, (market_base_demand) - (market_price))",
+            unit="units/step",
+            color=C_AUX,
+        ),
+    ],
+    edges=[
+        make_inflow_edge("market_e1", "market_supply", "market_inventory"),
+        make_outflow_edge("market_e2", "market_inventory", "market_sales"),
+        make_feedback_edge("market_e3", "market_base_demand", "market_demand"),
+        make_feedback_edge("market_e4", "market_demand", "market_sales", op="add"),
+    ],
+)
+
+BOUNDARIES_CITY_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "frame_city",
+            "City limits inside this boundary",
+            270,
+            150,
+            boundary_mode=True,
+            frame_width=450,
+            frame_height=300,
+        ),
+        make_comment_node(
+            "metro_todo",
+            "Almost done: add the metro stock outside the frame and connect commuters so the wider boundary changes the story.",
+            20,
+            20,
+        ),
+        make_stock_node(
+            "city_pop",
+            "City population",
+            420,
+            240,
+            quantity=340,
+            unit="k people",
+            student_tooltip="Inside-boundary stock: residents counted by city limits.",
+        ),
+        make_flow_node(
+            "city_in",
+            "Move-ins",
+            160,
+            240,
+            bottleneck=8,
+            unit="k/yr",
+        ),
+        make_flow_node(
+            "city_out",
+            "Move-outs",
+            680,
+            240,
+            bottleneck=6,
+            unit="k/yr",
+        ),
+        make_constant_node(
+            "metro_jobs",
+            "Regional job pull (outside)",
+            160,
+            80,
+            quantity=1.3,
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Exogenous for a narrow city boundary; endogenous if the model widens to the metro area.",
+        ),
+        make_variable_node(
+            "commuter_pressure",
+            "Commuter pressure (finish)",
+            160,
+            160,
+            expression="",
+            unit="k/yr",
+            color=C_AUX,
+            student_tooltip="Finish this calculation and decide whether it belongs inside or outside the boundary.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("bc_e1", "city_in", "city_pop"),
+        make_outflow_edge("bc_e2", "city_pop", "city_out"),
+        make_feedback_edge("bc_e3", "metro_jobs", "commuter_pressure"),
+    ],
+)
+
+
+CUSTOM_ALMOST_DONE_GRAPHS = {
+    "Stocks and Flows": STOCKS_FLOWS_BANK_ALMOST,
+    "Constants and Variables": CONSTANTS_CAFE_ALMOST,
+    "Resilience": RESILIENCE_CITY_ALMOST,
+    "Self-Organization": SELF_ORG_MARKET_ALMOST,
+    "Boundaries": BOUNDARIES_CITY_ALMOST,
+}
+
+
+TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
+    "Stocks and Flows": [
+        (
+            "Task 1: Town water supply",
+            "Open the finished town water graph. Trace how water moves through reservoir, treatment, and household storage, then identify which flows add and which flows drain.",
+        ),
+        (
+            "Task 2: Personal budget transfers",
+            "Finish the budget graph. Wallet and savings are placed; reconnect the two missing transfer ends so money can move into savings and back to the wallet.",
+        ),
+        (
+            "Task 3: Household energy",
+            "Build a household energy model using only stocks and flows. Include at least one stored energy stock, two inflows, and two outflows.",
+        ),
+        (
+            "Task 4: Population age groups",
+            "Build children and adults as separate stocks. Use births, aging, and deaths as flows, then explain how people move through the system.",
+        ),
+    ],
+    "Constants and Variables": [
+        (
+            "Task 1: Bakery production parameters",
+            "Use the finished bakery graph to identify the oven count and loaves per oven constants, then explain how the baking rate variable feeds the inventory inflow.",
+        ),
+        (
+            "Task 2: Cafeteria lunch prep",
+            "Finish the cafeteria model. Meal trays, cooking capacity, expected demand, and serving pressure are placed; add the missing serving formula and information arrow.",
+        ),
+        (
+            "Task 3: Pasture carrying capacity",
+            "Build a pasture model with grass as a stock, regrowth and grazing as flows, carrying capacity as a constant, and a variable that names available headroom.",
+        ),
+        (
+            "Task 4: Workload and wellbeing",
+            "Build a small team model with wellbeing as a stock, workload and support as constants, a strain index variable, and a burnout drain.",
+        ),
+    ],
+    "Balancing Loop": [
+        (
+            "Task 1: Thermostat stability",
+            "Use the finished thermostat graph to trace goal, gap, corrective action, heating, and cooling. Change the setpoint and describe how the stock moves.",
+        ),
+        (
+            "Task 2: Student self evaluation",
+            "Finish the student loop. Performance, target grade, gap, study effort, and slippage are placed; complete the missing correction so performance moves toward the goal.",
+        ),
+        (
+            "Task 3: Shop inventory",
+            "Build an inventory balancing loop: stock on hand, target stock, stockout gap, reorder inflow, and customer purchase outflow.",
+        ),
+        (
+            "Task 4: Body temperature",
+            "Build body temperature regulation with a core temperature stock, setpoint, too cold and too hot gaps, heat generation, and heat loss.",
+        ),
+    ],
+    "Reinforcing Loop": [
+        (
+            "Task 1: Population growth (R)",
+            "Use the finished population growth graph to trace stock, multiplier, inflow, and stock again. Explain why the curve bends upward.",
+        ),
+        (
+            "Task 2: Self confidence spiral",
+            "Finish the self confidence model. Confidence and successful attempts inflow are placed; add the multiplier expression and reinforcing information links.",
+        ),
+        (
+            "Task 3: Compound interest",
+            "Build a compound interest loop: savings as stock, interest as inflow, and a multiplier that scales interest with the current balance.",
+        ),
+        (
+            "Task 4: Viral adoption",
+            "Build a viral adoption loop: active users as stock, new user inflow, and a multiplier that grows as the user base grows.",
+        ),
+    ],
+    "Delay": [
+        (
+            "Task 1: Car dealership",
+            "Use the finished dealership graph to trace target inventory, delayed reorder correction, shipments, and customer sales. Explain the oscillation.",
+        ),
+        (
+            "Task 2: Pollution visibility",
+            "Finish the pollution visibility model. Quality, target, delayed gap, cleanup, and emissions are placed; complete the delayed response path.",
+        ),
+        (
+            "Task 3: Decision making lag",
+            "Build a project quality model where late metrics cause delayed improvement initiatives and overcorrection.",
+        ),
+        (
+            "Task 4: Supply chain",
+            "Build a supply chain shelf model with order to receipt delay, customer purchases, target stock, and delayed replenishment.",
+        ),
+    ],
+    "Resilience": [
+        (
+            "Task 1: Forest after fire",
+            "Use the finished forest graph to identify multiple stocks, the fire shock, and parallel recovery paths that make the ecosystem resilient.",
+        ),
+        (
+            "Task 2: City economy after crisis",
+            "Finish the city recovery model. Employment and municipal capacity are placed; add the missing recovery formula and connect the support path.",
+        ),
+        (
+            "Task 3: Personal health recovery",
+            "Build a health recovery model with a health stock, illness drain, restorative inflows, and at least one buffer or support stock.",
+        ),
+        (
+            "Task 4: Biodiversity resistance",
+            "Build a biodiversity model with at least two species/function stocks and parallel recovery paths after a disturbance.",
+        ),
+    ],
+    "Self-Organization": [
+        (
+            "Task 1: Ant hill emergence",
+            "Use the finished ant hill graph to explain how local rule constants and repeated worker deposition create global structure without a boss node.",
+        ),
+        (
+            "Task 2: Free market pricing",
+            "Finish the market model. Inventory, supply, sales, local demand, and price signal are placed; add the missing price formula and signal path.",
+        ),
+        (
+            "Task 3: Organic city growth",
+            "Build a city growth model where neighborhoods, amenities, and migration interact from local incentives instead of a single central controller.",
+        ),
+        (
+            "Task 4: Immune response",
+            "Build an immune response model with threat stock, local activation, response capacity, and clearance flow.",
+        ),
+    ],
+    "Hierarchy": [
+        (
+            "Task 1: Environmental five level stack",
+            "Use the finished individual to planet hierarchy to trace how flows roll lower level activity into higher level stocks.",
+        ),
+        (
+            "Task 2: Biological hierarchy",
+            "Finish the biological hierarchy. Cell, organ, organism, and ecosystem stocks are placed; reconnect the missing roll up path and run it.",
+        ),
+        (
+            "Task 3: Company hierarchy",
+            "Build a company hierarchy with employee, team/department, and company stocks plus upward result flows and downward support flows.",
+        ),
+        (
+            "Task 4: Global issue ladder",
+            "Build a local to global issue ladder for climate or health: local action, national policy, and international agreement as nested levels.",
+        ),
+    ],
+    "Boundaries": [
+        (
+            "Task 1: University system",
+            "Use the finished university boundary graph to separate inside stocks/flows from outside drivers and explain why the line matters.",
+        ),
+        (
+            "Task 2: City vs metro",
+            "Finish the city vs metro boundary model. City population and regional job pull are placed; add the missing metro stock and commuter connection.",
+        ),
+        (
+            "Task 3: Personal to society",
+            "Build nested boundaries for you, family, and society. Add one stock or feedback that appears only when the boundary widens.",
+        ),
+        (
+            "Task 4: Watershed vs county",
+            "Build two boundary frames for water pollution: watershed and county line. Explain which stocks and loops move when the boundary changes.",
+        ),
+    ],
+    "Limits to Growth and the S-Curve": [
+        (
+            "Task 1: Business vs market limit",
+            "Use the finished business growth graph to identify the growth engine, the market ceiling, and the slow fast slow S curve phases.",
+        ),
+        (
+            "Task 2: Population and resources",
+            "Finish the population resource model. Population and carrying capacity are placed; complete the headroom limited growth path.",
+        ),
+        (
+            "Task 3: Technology adoption",
+            "Build a technology adoption S curve with adopters as a stock, new adoption as inflow, and saturation as the limiting headroom.",
+        ),
+        (
+            "Task 4: Pollution budget",
+            "Build a pollution accumulation model where remaining assimilative capacity or budget limits further growth.",
+        ),
+    ],
+    "Tragedy of the Commons and Escalation": [
+        (
+            "Commons: Task 1: Overgrazing pasture",
+            "Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.",
+        ),
+        (
+            "Commons: Task 2: Ocean overfishing",
+            "Finish the fishery commons model. Fish biomass, fleet effort, catch pressure, and regrowth are placed; complete the missing private incentive path.",
+        ),
+        (
+            "Commons: Task 3: City air pollution",
+            "Build an urban air commons model with clean air as shared stock, private emissions as drains, and at least one recovery or regulation path.",
+        ),
+        (
+            "Commons: Task 4: Public road traffic",
+            "Build a road capacity commons model where individual route choices create collective congestion. Add one structural policy lever.",
+        ),
+        (
+            "Escalation: Task 1: Arms race",
+            "Use the finished arms race graph to trace the two cross reinforcing buildup paths and predict behavior if neither side changes rules.",
+        ),
+        (
+            "Escalation: Task 2: Price war",
+            "Finish the price war model. Rival pressure stocks and discount flows are placed; complete the missing cross response path.",
+        ),
+        (
+            "Escalation: Task 3: Social media outrage",
+            "Build a two community outrage model with mutual reaction signals and at least one intervention that weakens the escalation.",
+        ),
+        (
+            "Escalation: Task 4: Advertising competition",
+            "Build an advertising arms race model with rival attention or ad spend stocks and cross response flows.",
+        ),
+    ],
+}
+
+
+def apply_task_copy_overrides(lesson: dict) -> None:
+    overrides = TASK_COPY_OVERRIDES.get(lesson["title"])
+    if not overrides:
+        return
+    if len(overrides) != len(lesson["tasks"]):
+        raise ValueError(f"Task copy override count mismatch for {lesson['title']}")
+    for task, (title, description) in zip(lesson["tasks"], overrides):
+        task["title"] = title
+        task["description"] = description
+
+
+def task_groups_for_scaffolding(lesson: dict) -> list[list[dict]]:
+    tasks = lesson["tasks"]
+    if lesson["title"] == "Tragedy of the Commons and Escalation":
+        split_at = next((i for i, task in enumerate(tasks) if str(task["title"]).startswith("Escalation:")), len(tasks))
+        return [tasks[:split_at], tasks[split_at:]]
+    return [tasks]
+
+
+def apply_task_scaffolding(lesson: dict) -> dict:
+    for group in task_groups_for_scaffolding(lesson):
+        if not group:
+            continue
+
+        first = group[0]
+        first["description"] = (
+            "Reference graph: inspect the structure, run the simulation, and use it as an example. "
+            f"{remove_task_leading_phrases(first['description'])}"
+        )
+
+        if len(group) >= 2:
+            second = group[1]
+            custom_graph = CUSTOM_ALMOST_DONE_GRAPHS.get(lesson["title"])
+            if lesson["title"] == "Tragedy of the Commons and Escalation":
+                custom_graph = (
+                    TRAGEDY_FISHERY_ALMOST
+                    if str(group[0]["title"]).startswith("Commons:")
+                    else ESCALATION_PRICE_WAR_ALMOST
+                )
+            if custom_graph is not None:
+                second["graph"] = custom_graph
+            elif second["graph"] is not EMPTY_GRAPH:
+                second["graph"] = make_almost_done_graph(
+                    second["graph"],
+                    note=(
+                        "Almost done: a couple of details are intentionally missing. "
+                        "Add the missing formula and reconnect the missing information links before you run and submit."
+                    ),
+                )
+            second_intro = (
+                "Almost complete: most stock and flow nodes are placed, but a couple of stock and flow connections are missing. "
+                if lesson["title"] == "Stocks and Flows"
+                else "Almost complete: most nodes are placed, but one formula and a couple of connections are missing. "
+            )
+            second["description"] = (
+                f"{second_intro}{remove_task_leading_phrases(second['description'])}"
+            )
+
+        for task in group[2:]:
+            task["graph"] = EMPTY_GRAPH
+            task["description"] = (
+                "Blank canvas: build the model from the brief, run it, and explain the result. "
+                f"{blank_canvas_task_body(task['description'])}"
+            )
+
+        for task in group:
+            colorize_graph(task["graph"])
+            beautify_graph_layout(task["graph"])
+
+    return lesson
+
+
+for _lesson_spec in [
+    LESSON_STOCKS_FLOWS,
+    LESSON_CONSTANTS_AND_VARIABLES,
+    LESSON_BALANCING_LOOPS,
+    LESSON_REINFORCING_LOOPS,
+    LESSON_DELAYS,
+    LESSON_RESILIENCE,
+    LESSON_SELF_ORGANIZATION,
+    LESSON_HIERARCHY,
+    LESSON_BOUNDARIES,
+    LESSON_EXAMPLES_1,
+    LESSON_EXAMPLES_2,
+]:
+    apply_task_copy_overrides(_lesson_spec)
+    apply_task_scaffolding(_lesson_spec)
+
+
+# =============================================================================
+# Section specs
 # =============================================================================
 
 SYSTEMS_THINKING_SECTIONS: list[dict] = [
     {
-        "title": "The Basics",
-        "color": "#3b82f6",
+        "title": "Basics",
+        "color": "#1E40AF",
         "order_index": 0,
         "lessons": [
             LESSON_STOCKS_FLOWS,
-            LESSON_BALANCING_LOOPS,
-            LESSON_REINFORCING_LOOPS,
+            LESSON_CONSTANTS_AND_VARIABLES,
         ],
     },
     {
-        "title": "System Dynamics",
-        "color": "#f97316",
+        "title": "Feedbacks",
+        "color": "#F59E0B",
         "order_index": 1,
         "lessons": [
+            LESSON_BALANCING_LOOPS,
+            LESSON_REINFORCING_LOOPS,
             LESSON_DELAYS,
-            LESSON_S_SHAPED_GROWTH,
         ],
     },
     {
-        "title": "System Archetypes",
-        "color": "#a855f7",
+        "title": "System Properties",
+        "color": "#14B8A6",
         "order_index": 2,
         "lessons": [
-            LESSON_LIMITS_TO_GROWTH,
-            LESSON_TRAGEDY_OF_COMMONS,
-            LESSON_ESCALATION,
+            LESSON_RESILIENCE,
+            LESSON_SELF_ORGANIZATION,
+            LESSON_HIERARCHY,
+            LESSON_BOUNDARIES,
+        ],
+    },
+    {
+        "title": "Traps and Opportunities",
+        "color": "#8B5CF6",
+        "order_index": 3,
+        "lessons": [
+            LESSON_EXAMPLES_1,
+            LESSON_EXAMPLES_2,
         ],
     },
 ]
@@ -1433,18 +5141,64 @@ SYSTEMS_THINKING_SECTIONS: list[dict] = [
 # Seeding functions
 # =============================================================================
 
-def seed_systems_thinking(db: Session) -> None:
-    """Create all systems-thinking sections, lessons, and tasks if they are missing.
+LEGACY_SECTION_TITLES = frozenset(
+    {
+        "The Basics",
+        "System Dynamics",
+        "System Archetypes",
+    }
+)
 
-    Safe to call on every startup — existing records are never overwritten except
-    for template graph_json changes (to allow content updates without wiping data).
+
+def _delete_lesson_cascade(db: Session, lesson: Lesson) -> None:
+    tasks = db.query(LessonTask).filter(LessonTask.lesson_id == lesson.id).all()
+    for task in tasks:
+        db.query(UserTaskProgress).filter(UserTaskProgress.task_id == task.id).delete()
+        sid = int(task.system_id)
+        db.delete(task)
+        db.flush()
+        tmpl = db.query(SystemModel).filter(SystemModel.id == sid).first()
+        if tmpl is not None:
+            db.delete(tmpl)
+    db.query(UserProgress).filter(UserProgress.lesson_id == lesson.id).delete()
+    for orphan in (
+        db.query(SystemModel)
+        .filter(
+            SystemModel.lesson_id == lesson.id,
+        )
+        .all()
+    ):
+        db.delete(orphan)
+    db.delete(lesson)
+    db.flush()
+
+
+def delete_superseded_systems_thinking_sections(db: Session) -> None:
+    """Remove old section trees (pre-2026 curriculum) so renames do not duplicate rows."""
+    for title in LEGACY_SECTION_TITLES:
+        section = db.query(Section).filter(Section.title == title).first()
+        if section is None:
+            continue
+        lessons = db.query(Lesson).filter(Lesson.section_id == section.id).all()
+        for lesson in lessons:
+            _delete_lesson_cascade(db, lesson)
+        db.delete(section)
+        db.flush()
+
+
+def seed_systems_thinking(db: Session) -> None:
+    """Create or update systems-thinking sections, lessons, and tasks from this module.
+
+    Deletes legacy section titles in ``LEGACY_SECTION_TITLES`` once, then upserts
+    the current ``SYSTEMS_THINKING_SECTIONS`` spec.
     """
+    delete_superseded_systems_thinking_sections(db)
     for section_spec in SYSTEMS_THINKING_SECTIONS:
-        _ensure_section(db, section_spec)
+        upsert_systems_section(db, section_spec)
     db.commit()
 
 
-def _ensure_section(db: Session, spec: dict) -> None:
+def upsert_systems_section(db: Session, spec: dict) -> None:
     section = db.query(Section).filter(Section.title == spec["title"]).first()
     if not section:
         section = Section(
@@ -1455,36 +5209,71 @@ def _ensure_section(db: Session, spec: dict) -> None:
         )
         db.add(section)
         db.flush()
+    else:
+        section.color = spec["color"]
+        section.order_index = spec["order_index"]
+        section.is_published = True
+        db.flush()
 
     for lesson_spec in spec["lessons"]:
-        _ensure_lesson(db, section, lesson_spec)
+        upsert_systems_lesson(db, section, lesson_spec)
 
 
-def _ensure_lesson(db: Session, section: Section, spec: dict) -> None:
+def _delete_systems_task_cascade(db: Session, task: LessonTask) -> None:
+    db.query(UserTaskProgress).filter(UserTaskProgress.task_id == task.id).delete()
+    sid = int(task.system_id)
+    db.delete(task)
+    db.flush()
+    tmpl = db.query(SystemModel).filter(SystemModel.id == sid).first()
+    if tmpl is not None:
+        db.delete(tmpl)
+    db.flush()
+
+
+def upsert_systems_lesson(db: Session, section: Section, spec: dict) -> None:
+    order_idx = int(spec["order_index"])
     lesson = (
         db.query(Lesson)
-        .filter(Lesson.section_id == section.id, Lesson.title == spec["title"])
+        .filter(Lesson.section_id == section.id, Lesson.order_index == order_idx)
         .first()
     )
-    if not lesson:
+    if lesson is None:
+        lesson = (
+            db.query(Lesson)
+            .filter(Lesson.section_id == section.id, Lesson.title == spec["title"])
+            .first()
+        )
+    if lesson is None:
         lesson = Lesson(
             title=spec["title"],
             content_markdown=spec["content_markdown"],
             section_id=section.id,
-            order_index=spec["order_index"],
+            order_index=order_idx,
             is_published=True,
         )
         db.add(lesson)
         db.flush()
+    else:
+        lesson.title = spec["title"]
+        lesson.content_markdown = spec["content_markdown"]
+        lesson.order_index = order_idx
+        lesson.is_published = True
+        db.flush()
+
+    desired_orders = {int(t["order_index"]) for t in spec["tasks"]}
+    for task in db.query(LessonTask).filter(LessonTask.lesson_id == lesson.id).all():
+        if int(task.order_index) not in desired_orders:
+            _delete_systems_task_cascade(db, task)
 
     for task_spec in spec["tasks"]:
-        _ensure_task(db, lesson, task_spec)
+        upsert_systems_task(db, lesson, task_spec)
 
 
-def _ensure_task(db: Session, lesson: Lesson, spec: dict) -> None:
+def upsert_systems_task(db: Session, lesson: Lesson, spec: dict) -> None:
+    oi = int(spec["order_index"])
     task = (
         db.query(LessonTask)
-        .filter(LessonTask.lesson_id == lesson.id, LessonTask.title == spec["title"])
+        .filter(LessonTask.lesson_id == lesson.id, LessonTask.order_index == oi)
         .first()
     )
     if not task:
@@ -1504,14 +5293,29 @@ def _ensure_task(db: Session, lesson: Lesson, spec: dict) -> None:
             title=spec["title"],
             description=spec["description"],
             system_id=template.id,
-            order_index=spec["order_index"],
+            order_index=oi,
         )
         db.add(task)
         db.flush()
     else:
-        # Keep template graph in sync with the spec (content updates).
-        template = (
-            db.query(SystemModel).filter(SystemModel.id == task.system_id).first()
-        )
-        if template and template.graph_json != spec["graph"]:
-            template.graph_json = spec["graph"]
+        task.title = spec["title"]
+        task.order_index = oi
+        task.description = spec["description"]
+        template = db.query(SystemModel).filter(SystemModel.id == task.system_id).first()
+        if template:
+            if template.title != spec["title"]:
+                template.title = spec["title"]
+            if template.graph_json != spec["graph"]:
+                template.graph_json = spec["graph"]
+            user_copies = (
+                db.query(SystemModel)
+                .filter(
+                    SystemModel.source_system_id == template.id,
+                    SystemModel.is_submitted_for_review == False,
+                )
+                .all()
+            )
+            for copy in user_copies:
+                if copy.graph_json != spec["graph"]:
+                    copy.graph_json = spec["graph"]
+        db.flush()

@@ -6,7 +6,7 @@ from backend.config import settings
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _resolve_path(path_value: str) -> Path:
+def resolve_project_path(path_value: str) -> Path:
     path = Path(path_value).expanduser()
     if path.is_absolute():
         return path
@@ -14,7 +14,7 @@ def _resolve_path(path_value: str) -> Path:
 
 
 def get_files_dir() -> Path:
-    files_dir = _resolve_path(settings.files_dir)
+    files_dir = resolve_project_path(settings.files_dir)
     files_dir.mkdir(parents=True, exist_ok=True)
     return files_dir
 

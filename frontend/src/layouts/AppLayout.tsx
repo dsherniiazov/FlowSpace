@@ -284,23 +284,20 @@ function GlobalTutorialOverlay(): JSX.Element | null {
   const location = useLocation();
   const suppressed = useTutorialStore((s) => s.overlaySuppressed);
   const onFinish = useTutorialStore((s) => s.onFinishCallback);
+  const onAbort = useTutorialStore((s) => s.onAbortCallback);
   const active = useTutorialStore((s) => s.active);
   const lessonId = useTutorialStore((s) => s.lessonId);
   const reset = useTutorialStore((s) => s.reset);
 
-  // If the user navigates away from a tutorial-eligible route without
-  // finishing the lesson, clear the overlay so the step popup doesn't
-  // linger on unrelated pages.
   useEffect(() => {
     if (!active) return;
     const path = location.pathname;
     const onLab = path === "/app/lab";
-    // Workspace lesson legitimately walks the learner to Profile → Import.
     const onWorkspaceProfile = path === "/app/profile" && lessonId === "workspace";
     if (!onLab && !onWorkspaceProfile) {
       reset();
     }
   }, [active, lessonId, location.pathname, reset]);
 
-  return <TutorialOverlay suppressed={suppressed} onFinish={onFinish ?? undefined} />;
+  return <TutorialOverlay suppressed={suppressed} onFinish={onFinish ?? undefined} onAbort={onAbort ?? undefined} />;
 }

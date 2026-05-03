@@ -1,18 +1,10 @@
-"""baseline schema
-
-Revision ID: 20260318_baseline
-Revises:
-Create Date: 2026-03-18
-"""
-
 from typing import Sequence, Union
 
 from alembic import op
 
+from backend import models
 from backend.db import Base
-from backend import models  # noqa: F401 - ensures all model tables are registered in metadata
 
-# revision identifiers, used by Alembic.
 revision: str = "20260318_baseline"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None

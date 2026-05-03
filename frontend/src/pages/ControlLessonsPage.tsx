@@ -11,12 +11,20 @@ import {
 import { createSection, deleteSection, fetchSections, updateSection } from "../features/sections/api";
 import { fetchSystem } from "../features/systems/api";
 import { Lesson, LessonTask, Section } from "../types/api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ControlLessonsModal } from "./controlLessons/ControlLessonsModal";
+import { ControlSectionList } from "./controlLessons/ControlSectionList";
 import { DEFAULT_SECTION_COLORS, ModalState, SectionKey, UNASSIGNED_SECTION_KEY } from "./controlLessons/types";
 import { sortByOrder } from "./controlLessons/utils";
 
+type DeleteTarget =
+  | { type: "section"; sectionId: number }
+  | { type: "lesson"; lessonId: number; sectionKey: SectionKey }
+  | { type: "task"; taskId: number; lessonId: number };
+
 export function ControlLessonsPage(): JSX.Element {
   const [modalState, setModalState] = useState<ModalState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [sectionTitle, setSectionTitle] = useState("");
   const [sectionColor, setSectionColor] = useState(DEFAULT_SECTION_COLORS[0]);
   const [lessonTitle, setLessonTitle] = useState("");
@@ -82,6 +90,10 @@ export function ControlLessonsPage(): JSX.Element {
   const unassignedLessons = lessonsBySection.get(UNASSIGNED_SECTION_KEY) ?? [];
   const isInitialLoading = sectionsQuery.isPending || lessonsQuery.isPending || tasksQuery.isPending;
   const hasInitialError = sectionsQuery.isError || lessonsQuery.isError || tasksQuery.isError;
+  const isDeleting =
+    deleteSectionMutation.isPending ||
+    deleteLessonMutation.isPending ||
+    deleteTaskMutation.isPending;
 
   function invalidateLessonTree(): void {
     void queryClient.invalidateQueries({ queryKey: ["sections"] });
@@ -329,38 +341,73 @@ export function ControlLessonsPage(): JSX.Element {
 
   function onDeleteSection(sectionId: number): void {
     if (deleteSectionMutation.isPending) return;
-    if (!window.confirm("Delete section? Lessons will become unassigned.")) return;
-
-    deleteSectionMutation.mutate(sectionId, {
-      onSuccess: () => {
-        invalidateLessonTree();
-        setModalState(null);
-      },
-    });
+    setDeleteTarget({ type: "section", sectionId });
   }
 
   function onDeleteLesson(lessonId: number, sectionKey: SectionKey): void {
     if (deleteLessonMutation.isPending) return;
-    if (!window.confirm("Delete lesson?")) return;
-
-    deleteLessonMutation.mutate(lessonId, {
-      onSuccess: () => {
-        invalidateLessonTree();
-        openSectionDetail(sectionKey);
-      },
-    });
+    setDeleteTarget({ type: "lesson", lessonId, sectionKey });
   }
 
   function onDeleteTask(taskId: number, lessonId: number): void {
     if (deleteTaskMutation.isPending) return;
-    if (!window.confirm("Delete task?")) return;
+    setDeleteTarget({ type: "task", taskId, lessonId });
+  }
 
-    deleteTaskMutation.mutate(taskId, {
+  function confirmDeleteTarget(): void {
+    if (!deleteTarget) return;
+
+    if (deleteTarget.type === "section") {
+      deleteSectionMutation.mutate(deleteTarget.sectionId, {
+        onSuccess: () => {
+          invalidateLessonTree();
+          setModalState(null);
+          setDeleteTarget(null);
+        },
+      });
+      return;
+    }
+
+    if (deleteTarget.type === "lesson") {
+      deleteLessonMutation.mutate(deleteTarget.lessonId, {
+        onSuccess: () => {
+          invalidateLessonTree();
+          openSectionDetail(deleteTarget.sectionKey);
+          setDeleteTarget(null);
+        },
+      });
+      return;
+    }
+
+    deleteTaskMutation.mutate(deleteTarget.taskId, {
       onSuccess: () => {
         invalidateLessonTree();
-        openLessonDetail(lessonId);
+        openLessonDetail(deleteTarget.lessonId);
+        setDeleteTarget(null);
       },
     });
+  }
+
+  function deleteDialogCopy(): { title: string; description: string; confirmLabel: string } {
+    if (deleteTarget?.type === "section") {
+      return {
+        title: "Delete section?",
+        description: "Lessons in this section will become unassigned.",
+        confirmLabel: "Delete section",
+      };
+    }
+    if (deleteTarget?.type === "lesson") {
+      return {
+        title: "Delete lesson?",
+        description: "This removes the lesson and its tasks.",
+        confirmLabel: "Delete lesson",
+      };
+    }
+    return {
+      title: "Delete task?",
+      description: "This removes the task from the lesson.",
+      confirmLabel: "Delete task",
+    };
   }
 
   async function openTaskSystemEditor(taskId: number): Promise<void> {
@@ -392,69 +439,28 @@ export function ControlLessonsPage(): JSX.Element {
     );
   }
 
+  const deleteDialog = deleteDialogCopy();
+
   return (
     <section className="control-content space-y-4">
-      <div className="panel control-panel space-y-4 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="control-section-heading text-lg font-semibold">Sections</h3>
-            <p className="control-copy text-sm text-slate-500">Manage sections, lessons and tasks from one place.</p>
-          </div>
-          <button className="btn-primary" type="button" onClick={openSectionCreate}>
-            Add section
-          </button>
-        </div>
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title={deleteDialog.title}
+        description={deleteDialog.description}
+        confirmLabel={deleteDialog.confirmLabel}
+        isSubmitting={isDeleting}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteTarget}
+      />
 
-        <div className="space-y-2">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left transition hover:bg-slate-50"
-              onClick={() => openSectionDetail(section.id)}
-            >
-              <div className="flex items-center gap-3">
-                <span
-                  className="inline-block h-4 w-4 rounded-full border border-slate-200"
-                  style={{ backgroundColor: section.color ?? "#64748b" }}
-                />
-                <div>
-                  <div className="font-medium">{section.title}</div>
-                  <div className="text-sm text-slate-500">
-                    Lessons: {getSectionLessons(section.id).length} • Tasks: {getSectionTaskCount(section.id)}
-                  </div>
-                </div>
-              </div>
-              <span className="text-sm text-slate-400">Open</span>
-            </button>
-          ))}
-
-          {unassignedLessons.length ? (
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-left transition hover:bg-slate-50"
-              onClick={() => openSectionDetail(UNASSIGNED_SECTION_KEY)}
-            >
-              <div className="flex items-center gap-3">
-                <span className="inline-block h-4 w-4 rounded-full border border-slate-200 bg-slate-500" />
-                <div>
-                  <div className="font-medium">Without section</div>
-                  <div className="text-sm text-slate-500">
-                    Lessons: {unassignedLessons.length} • Tasks: {getSectionTaskCount(UNASSIGNED_SECTION_KEY)}
-                  </div>
-                </div>
-              </div>
-              <span className="text-sm text-slate-400">Open</span>
-            </button>
-          ) : null}
-
-          {!sections.length && !unassignedLessons.length ? (
-            <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-sm text-slate-500">
-              No sections yet. Create the first section to start adding lessons.
-            </div>
-          ) : null}
-        </div>
-      </div>
+      <ControlSectionList
+        sections={sections}
+        unassignedLessons={unassignedLessons}
+        getSectionLessons={getSectionLessons}
+        getSectionTaskCount={getSectionTaskCount}
+        onAddSection={openSectionCreate}
+        onOpenSection={openSectionDetail}
+      />
 
       <ControlLessonsModal
         modalState={modalState}

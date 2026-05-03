@@ -21,6 +21,7 @@ export type LabColorTokens = {
   flowAccent: string;
   inflow: string;
   outflow: string;
+  balancing: string;
   neutral: string;
   neutralLabel: string;
   labelBgDark: string;
@@ -41,28 +42,29 @@ export type LabColorTokens = {
 export const UI_PREFERENCES_STORAGE_KEY = "flowspace-ui-preferences";
 
 const DEFAULT_UI_PREFERENCES: UiPreferencesSnapshot = {
-  uiScale: "medium",
+  uiScale: "large",
   colorblindMode: "off",
   highContrastMode: false,
 };
 
 const LAB_COLOR_TOKENS_BY_MODE: Record<ColorblindMode, LabColorTokens> = {
   off: {
-    flowAccent: "#3b82f6",
-    inflow: "#22c55e",
-    outflow: "#ef4444",
+    flowAccent: "#2563EB",
+    inflow: "#10B981",
+    outflow: "#EF4444",
+    balancing: "#14B8A6",
     neutral: "#6b7280",
     neutralLabel: "#a3a3a3",
     labelBgDark: "#050505",
     labelBgLight: "#ffffff",
     discrepancy: {
-      positive: "#22c55e",
-      negative: "#ef4444",
+      positive: "#14B8A6",
+      negative: "#0d9488",
       neutral: "#a3a3a3",
     },
     reinforcing: {
-      positive: "#22c55e",
-      negative: "#ef4444",
+      positive: "#F59E0B",
+      negative: "#D97706",
     },
     control: {
       add: "#22c55e",
@@ -78,6 +80,7 @@ const LAB_COLOR_TOKENS_BY_MODE: Record<ColorblindMode, LabColorTokens> = {
     flowAccent: "#0072b2",
     inflow: "#0072b2",
     outflow: "#d55e00",
+    balancing: "#009e73",
     neutral: "#5b6472",
     neutralLabel: "#7c8799",
     labelBgDark: "#050505",
@@ -105,6 +108,7 @@ const LAB_COLOR_TOKENS_BY_MODE: Record<ColorblindMode, LabColorTokens> = {
     flowAccent: "#3366cc",
     inflow: "#3366cc",
     outflow: "#cc6600",
+    balancing: "#44aa99",
     neutral: "#667085",
     neutralLabel: "#8a94a6",
     labelBgDark: "#050505",
@@ -132,6 +136,7 @@ const LAB_COLOR_TOKENS_BY_MODE: Record<ColorblindMode, LabColorTokens> = {
     flowAccent: "#c03a8c",
     inflow: "#c03a8c",
     outflow: "#00897b",
+    balancing: "#00897b",
     neutral: "#636a75",
     neutralLabel: "#8b94a2",
     labelBgDark: "#050505",

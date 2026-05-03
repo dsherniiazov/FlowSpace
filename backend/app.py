@@ -12,9 +12,9 @@ from backend.routers.simulations import router as simulations_router
 from backend.routers.users import router as users_router
 from backend.routers.auth import router as auth_router
 from backend.routers.notifications import router as notifications_router
+from backend.routers.settings import router as settings_router
 from backend.config import settings
-from backend.db import SessionLocal
-from backend.seed import seed_intro
+from backend.seed import run_seed
 from backend.storage_paths import get_files_dir
 from backend.utils.errors import DomainError, domain_error_handler
 
@@ -23,12 +23,9 @@ app.add_exception_handler(DomainError, domain_error_handler)
 
 
 @app.on_event("startup")
-def _run_seeds() -> None:
-    db = SessionLocal()
-    try:
-        seed_intro(db)
-    finally:
-        db.close()
+def run_startup_seed() -> None:
+    """Idempotent: Intro + systems-thinking sections/lessons/tasks (see backend/seed.py)."""
+    run_seed()
 
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key)
 allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
@@ -52,3 +49,4 @@ app.include_router(simulations_router)
 app.include_router(users_router)
 app.include_router(auth_router)
 app.include_router(notifications_router)
+app.include_router(settings_router)

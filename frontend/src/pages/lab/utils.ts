@@ -2,8 +2,6 @@ import { Edge, Node } from "reactflow";
 import { getLabColorTokens } from "../../store/uiPreferencesStore";
 import { ConnectedFlowOption, ControlOp, SourceHandleId, TargetHandleId } from "./types";
 
-export type { ConnectedFlowOption } from "./types";
-
 export function isVariableNode(node: Node | undefined): boolean {
   if (!node) return false;
   return node.type === "variableNode" || String(node.id).startsWith("variable_");
@@ -113,25 +111,17 @@ export function getNodeCenter(node: Node): { x: number; y: number } {
   return { x: node.position.x + width / 2, y: node.position.y + height / 2 };
 }
 
-export function closestSourceHandle(
-  sourceNode: Node,
-  targetNode: Node,
-  allowed?: SourceHandleId[],
-): string {
-  const { width, height } = getNodeSize(sourceNode);
-  const target = getNodeCenter(targetNode);
-  const candidates = [
-    { id: "source-left" as SourceHandleId, x: sourceNode.position.x, y: sourceNode.position.y + height / 2 },
-    { id: "source-right" as SourceHandleId, x: sourceNode.position.x + width, y: sourceNode.position.y + height / 2 },
-    { id: "source-top" as SourceHandleId, x: sourceNode.position.x + width / 2, y: sourceNode.position.y },
-    { id: "source-bottom" as SourceHandleId, x: sourceNode.position.x + width / 2, y: sourceNode.position.y + height },
-  ];
-  const pool = allowed?.length ? candidates.filter((item) => allowed.includes(item.id)) : candidates;
-  const fallback = pool[0] ?? candidates[0];
+function nearestHandleId<T extends string>(
+  corners: { id: T; x: number; y: number }[],
+  focal: { x: number; y: number },
+  allowed?: T[],
+): T {
+  const pool = allowed?.length ? corners.filter((c) => allowed.includes(c.id)) : corners;
+  const fallback = pool[0] ?? corners[0];
   let best = fallback;
   let bestDist = Number.POSITIVE_INFINITY;
   for (const item of pool) {
-    const dist = (item.x - target.x) ** 2 + (item.y - target.y) ** 2;
+    const dist = (item.x - focal.x) ** 2 + (item.y - focal.y) ** 2;
     if (dist < bestDist) {
       bestDist = dist;
       best = item;
@@ -140,31 +130,36 @@ export function closestSourceHandle(
   return best.id;
 }
 
+export function closestSourceHandle(
+  sourceNode: Node,
+  targetNode: Node,
+  allowed?: SourceHandleId[],
+): string {
+  const { width, height } = getNodeSize(sourceNode);
+  const focal = getNodeCenter(targetNode);
+  const corners: { id: SourceHandleId; x: number; y: number }[] = [
+    { id: "source-left", x: sourceNode.position.x, y: sourceNode.position.y + height / 2 },
+    { id: "source-right", x: sourceNode.position.x + width, y: sourceNode.position.y + height / 2 },
+    { id: "source-top", x: sourceNode.position.x + width / 2, y: sourceNode.position.y },
+    { id: "source-bottom", x: sourceNode.position.x + width / 2, y: sourceNode.position.y + height },
+  ];
+  return nearestHandleId(corners, focal, allowed);
+}
+
 export function closestTargetHandle(
   sourceNode: Node,
   targetNode: Node,
   allowed?: TargetHandleId[],
 ): string {
   const { width, height } = getNodeSize(targetNode);
-  const source = getNodeCenter(sourceNode);
-  const candidates = [
-    { id: "target-left" as TargetHandleId, x: targetNode.position.x, y: targetNode.position.y + height / 2 },
-    { id: "target-right" as TargetHandleId, x: targetNode.position.x + width, y: targetNode.position.y + height / 2 },
-    { id: "target-top" as TargetHandleId, x: targetNode.position.x + width / 2, y: targetNode.position.y },
-    { id: "target-bottom" as TargetHandleId, x: targetNode.position.x + width / 2, y: targetNode.position.y + height },
+  const focal = getNodeCenter(sourceNode);
+  const corners: { id: TargetHandleId; x: number; y: number }[] = [
+    { id: "target-left", x: targetNode.position.x, y: targetNode.position.y + height / 2 },
+    { id: "target-right", x: targetNode.position.x + width, y: targetNode.position.y + height / 2 },
+    { id: "target-top", x: targetNode.position.x + width / 2, y: targetNode.position.y },
+    { id: "target-bottom", x: targetNode.position.x + width / 2, y: targetNode.position.y + height },
   ];
-  const pool = allowed?.length ? candidates.filter((item) => allowed.includes(item.id)) : candidates;
-  const fallback = pool[0] ?? candidates[0];
-  let best = fallback;
-  let bestDist = Number.POSITIVE_INFINITY;
-  for (const item of pool) {
-    const dist = (item.x - source.x) ** 2 + (item.y - source.y) ** 2;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = item;
-    }
-  }
-  return best.id;
+  return nearestHandleId(corners, focal, allowed);
 }
 
 export function feedbackLoopHandlePolicy(
@@ -341,4 +336,15 @@ export function collectConnectedFlows(
     }
   }
   return Array.from(result.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export function pastedGraphId(baseId: string, stamp: number, pasteSerial: number): string {
+  return `${baseId}_copy_${stamp}_${pasteSerial}`;
+}
+
+export function isDomTextInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return Boolean(target.isContentEditable);
 }

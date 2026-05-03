@@ -16,7 +16,6 @@ export function evaluateExpression(
   if (!source) return null;
   let compiled = EXPRESSION_FN_CACHE.get(source);
   if (!compiled) {
-    // eslint-disable-next-line no-new-func
     compiled = new Function("scope", `with (scope) { return (${source}); }`) as (
       scope: Record<string, unknown>,
     ) => unknown;

@@ -18,9 +18,13 @@ export function MarkReviewedModal({
 }: MarkReviewedModalProps): JSX.Element | null {
   const closeDialogShortcut = useShortcutStore((state) => state.bindings.close_dialog);
   const [comment, setComment] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isOpen) setComment("");
+    if (!isOpen) {
+      setComment("");
+      setError(null);
+    }
   }, [isOpen]);
 
   useEffect(() => {
@@ -75,6 +79,8 @@ export function MarkReviewedModal({
           />
         </label>
 
+        {error ? <div className="profile-modal-error">{error}</div> : null}
+
         <div className="profile-modal-actions">
           <button className="btn-secondary" type="button" onClick={onClose} disabled={isSubmitting}>
             Cancel
@@ -83,7 +89,10 @@ export function MarkReviewedModal({
             className="btn-primary"
             type="button"
             onClick={() => {
-              void onSubmit(comment);
+              setError(null);
+              void Promise.resolve(onSubmit(comment)).catch((reason: unknown) => {
+                setError(reason instanceof Error ? reason.message : "Unable to mark system as reviewed.");
+              });
             }}
             disabled={isSubmitting}
           >

@@ -1,10 +1,3 @@
-"""add notifications table for student inbox
-
-Revision ID: 20260417_notifications
-Revises: 20260401_reset_tokens
-Create Date: 2026-04-17
-"""
-
 from typing import Sequence, Union
 
 import sqlalchemy as sa

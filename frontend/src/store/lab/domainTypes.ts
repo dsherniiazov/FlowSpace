@@ -5,8 +5,6 @@ export type ReinforcingPolarity = "positive" | "negative";
 export type BalancingFeedbackLoop = {
   id: string;
   type: "balancing";
-  /** Optional user-provided display name shown in the editor and on the
-   *  simulation chart when the discrepancy series is rendered. */
   name?: string;
   stockId: string;
   goalNodeId: string;

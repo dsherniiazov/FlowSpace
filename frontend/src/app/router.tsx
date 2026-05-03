@@ -1,34 +1,25 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
+
 import { AppLayout } from "../layouts/AppLayout";
-import { ControlPage } from "../pages/ControlPage";
 import { ControlLessonsPage } from "../pages/ControlLessonsPage";
+import { ControlEmailPage } from "../pages/ControlEmailPage";
+import { ControlOAuthPage } from "../pages/ControlOAuthPage";
+import { ControlPage } from "../pages/ControlPage";
 import { ControlUsersPage } from "../pages/ControlUsersPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
-import { PendingReviewPage } from "../pages/PendingReviewPage";
 import { LandingPage } from "../pages/LandingPage";
 import { LabPage } from "../pages/lab";
-import { LessonDetailPage } from "../pages/LessonDetailPage";
+import { LessonFullReadPage } from "../pages/LessonFullReadPage";
 import { LessonsPage } from "../pages/LessonsPage";
 import { LoginPage } from "../pages/LoginPage";
-import { OAuthCallbackPage } from "../pages/OAuthCallbackPage";
+import { OAuthCallbackPage, OAuthProviderCallbackPage } from "../pages/OAuthCallbackPage";
+import { PendingReviewPage } from "../pages/PendingReviewPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { RegisterPage } from "../pages/RegisterPage";
 import { ResetPasswordPage } from "../pages/ResetPasswordPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { TaskExecutionPage } from "../pages/TaskExecutionPage";
-import { useAuthStore } from "../store/authStore";
-
-function Protected({ children }: { children: JSX.Element }): JSX.Element {
-  const token = useAuthStore((state) => state.token);
-  if (!token) return <Navigate to="/auth/login" replace />;
-  return children;
-}
-
-function AdminOnly({ children }: { children: JSX.Element }): JSX.Element {
-  const isAdmin = useAuthStore((state) => state.isAdmin);
-  if (!isAdmin) return <Navigate to="/app" replace />;
-  return children;
-}
+import { AdminOnly, Protected } from "./routeGuards";
 
 export const appRouter = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
@@ -36,6 +27,7 @@ export const appRouter = createBrowserRouter([
   { path: "/auth/register", element: <RegisterPage /> },
   { path: "/auth/forgot-password", element: <ForgotPasswordPage /> },
   { path: "/auth/reset-password", element: <ResetPasswordPage /> },
+  { path: "/auth/oauth/:provider/callback", element: <OAuthProviderCallbackPage /> },
   { path: "/auth/oauth/callback", element: <OAuthCallbackPage /> },
   {
     path: "/app",
@@ -47,7 +39,8 @@ export const appRouter = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="lessons" replace /> },
       { path: "lessons", element: <LessonsPage /> },
-      { path: "lessons/:lessonId", element: <LessonDetailPage /> },
+      { path: "lessons/:lessonId/read", element: <LessonFullReadPage /> },
+      { path: "lessons/:lessonId", element: <LessonFullReadPage /> },
       { path: "tasks/:taskId", element: <TaskExecutionPage /> },
       { path: "profile", element: <ProfilePage /> },
       { path: "settings", element: <SettingsPage /> },
@@ -72,6 +65,8 @@ export const appRouter = createBrowserRouter([
           { index: true, element: <Navigate to="lessons" replace /> },
           { path: "lessons", element: <ControlLessonsPage /> },
           { path: "users", element: <ControlUsersPage /> },
+          { path: "email", element: <ControlEmailPage /> },
+          { path: "oauth", element: <ControlOAuthPage /> },
         ],
       },
     ],

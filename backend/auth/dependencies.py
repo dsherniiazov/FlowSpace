@@ -48,7 +48,7 @@ def get_current_user(
 
 
 def get_current_admin(user=Depends(get_current_user)):
-    if not getattr(user, "is_admin", False):
+    if not getattr(user, "is_teacher", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Teacher access required",

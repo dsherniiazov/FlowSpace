@@ -18,6 +18,18 @@ export function ControlPage(): JSX.Element {
           >
             Users
           </NavLink>
+          <NavLink
+            to="/app/control/email"
+            className={({ isActive }) => `btn-secondary ${isActive ? "control-tab-active" : ""}`}
+          >
+            Email (SMTP)
+          </NavLink>
+          <NavLink
+            to="/app/control/oauth"
+            className={({ isActive }) => `btn-secondary ${isActive ? "control-tab-active" : ""}`}
+          >
+            OAuth
+          </NavLink>
         </div>
       </div>
       <Outlet />

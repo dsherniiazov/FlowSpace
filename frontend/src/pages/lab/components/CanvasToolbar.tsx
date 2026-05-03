@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { LockToggleIcon } from "../LockToggleIcon";
 
 type CanvasToolbarProps = {
@@ -32,7 +34,7 @@ function IconButton({
   className?: string;
   tutorial?: string;
   active?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <button
@@ -110,7 +112,7 @@ export function CanvasToolbar({
         type="button"
         onClick={onOpenHelp}
         aria-label="Open systems-thinking help"
-        title="Help — key systems-thinking concepts"
+        title="Help: key systems-thinking concepts"
         data-tutorial="help"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

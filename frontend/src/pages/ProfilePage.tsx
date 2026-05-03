@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ProfileAvatarModal } from "../components/ProfileAvatarModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileConfirmModal } from "../components/ProfileConfirmModal";
 import { ProfilePasswordModal } from "../components/ProfilePasswordModal";
 import {
@@ -14,8 +15,12 @@ import { createSystem, deleteSystem, fetchSystems } from "../features/systems/ap
 import { changeUserPassword, deleteUser, getAvatarUrl, uploadUserAvatar } from "../features/users/api";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
-import { InboxNotification, UserPublic } from "../types/api";
+import { UserPublic } from "../types/api";
 import { useLabStore } from "../store/labStore";
+import { InboxPanel } from "./profile/InboxPanel";
+import { MySystemsPanel } from "./profile/MySystemsPanel";
+import { ProfileSummaryPanel } from "./profile/ProfileSummaryPanel";
+import { ProfileTabs } from "./profile/ProfileTabs";
 
 function resolveErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "object" && error !== null && "response" in error) {
@@ -54,11 +59,10 @@ export function ProfilePage(): JSX.Element {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
   const [profileNotice, setProfileNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  // Id of the most recently imported system in this session — used to anchor
-  // the tutorial spotlight on the specific card the user just created.
   const [lastImportedSystemId, setLastImportedSystemId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"profile" | "inbox">("profile");
   const [openNotificationId, setOpenNotificationId] = useState<number | null>(null);
+  const [systemPendingDeletion, setSystemPendingDeletion] = useState<{ id: number; title: string } | null>(null);
 
   const profileQuery = useQuery({
     queryKey: ["profile", userId],
@@ -113,6 +117,7 @@ export function ProfilePage(): JSX.Element {
   const deleteSystemMutation = useMutation({
     mutationFn: async (systemId: number) => deleteSystem(systemId),
     onSuccess: () => {
+      setSystemPendingDeletion(null);
       queryClient.invalidateQueries({ queryKey: ["systems", userId] });
     },
   });
@@ -197,191 +202,54 @@ export function ProfilePage(): JSX.Element {
   return (
     <>
       <section className="profile-shell mx-auto max-w-5xl space-y-6">
-        <div className="profile-tabs" role="tablist" aria-label="Profile sections">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "profile"}
-            className={`profile-tab ${activeTab === "profile" ? "is-active" : ""}`}
-            onClick={() => setActiveTab("profile")}
-          >
-            Profile
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "inbox"}
-            className={`profile-tab ${activeTab === "inbox" ? "is-active" : ""}`}
-            onClick={() => setActiveTab("inbox")}
-          >
-            Inbox
-            {unreadCount > 0 ? (
-              <span className="profile-tab-badge" aria-label={`${unreadCount} unread`}>
-                {unreadCount}
-              </span>
-            ) : null}
-          </button>
-        </div>
+        <ProfileTabs activeTab={activeTab} unreadCount={unreadCount} onChange={setActiveTab} />
 
         {activeTab === "profile" ? (
-        <>
-        <div className="panel profile-main-panel p-8">
-          <h2 className="profile-page-heading text-3xl font-medium text-white">Profile</h2>
-          <div className="mt-6 grid gap-8 lg:grid-cols-[320px_1fr]">
-            <div className="space-y-5">
-              <div className="profile-block p-5">
-                <div className="mx-auto flex h-36 w-36 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-4xl font-semibold text-zinc-100">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="h-full w-full rounded-full object-cover" />
-                  ) : (
-                    initials || "U"
-                  )}
-                </div>
-                <div className="profile-block-copy mt-3 text-center text-sm text-zinc-500">Profile avatar</div>
-                <div className="mt-3 flex items-center justify-center">
-                  <button className="btn-secondary" onClick={() => setIsAvatarModalOpen(true)} disabled={uploadAvatarMutation.isPending}>
-                    {uploadAvatarMutation.isPending ? "Uploading..." : "Upload avatar"}
-                  </button>
-                </div>
-                <div className="mt-4">
-                  <div className="profile-block-copy mb-1 flex items-center justify-between text-xs text-zinc-500">
-                    <span>Task progress</span>
-                    <span>{progressQuery.isLoading ? "..." : `${completion}%`}</span>
-                  </div>
-                  <div className="profile-progress-track h-2.5 bg-zinc-800">
-                    <div className="profile-progress-fill h-2.5 bg-zinc-200" style={{ width: `${completion}%` }} />
-                  </div>
-                  <div className="profile-block-copy mt-2 text-center text-xs text-zinc-500">
-                    {progressQuery.isError ? "Unable to load task progress." : `${completedTasks} / ${totalTasks} tasks completed`}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="profile-details grid gap-3 text-sm text-zinc-300">
-              <div><span className="profile-label text-zinc-500">ID:</span> {profile.id}</div>
-              <div>
-                <span className="profile-label text-zinc-500">Name:</span> {profile.name} {profile.last_name}
-                {isAdmin ? <span className="profile-role-badge ml-2 rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-200">teacher</span> : null}
-              </div>
-              <div><span className="profile-label text-zinc-500">Email:</span> {profile.email}</div>
-              <div><span className="profile-label text-zinc-500">Saved systems:</span> {systems.length}</div>
-              <div>
-                <span className="profile-label text-zinc-500">Tasks completed:</span>{" "}
-                {progressQuery.isError ? "Unable to load" : `${completedTasks} / ${totalTasks}`}
-              </div>
-              {profileNotice ? (
-                <div className={`profile-notice border px-4 py-3 text-sm ${profileNotice.tone === "success" ? "border-emerald-700/60 bg-emerald-950/50 text-emerald-100" : "border-red-700/60 bg-red-950/50 text-red-100"}`}>
-                  {profileNotice.text}
-                </div>
-              ) : null}
-              <div className="pt-2">
-                <button
-                  className="btn-secondary"
-                  type="button"
-                  onClick={() => setIsPasswordModalOpen(true)}
-                  disabled={changePasswordMutation.isPending}
-                >
-                  {changePasswordMutation.isPending ? "Updating..." : "Change password"}
-                </button>
-              </div>
-              <div className="pt-2">
-                <button
-                  className="btn-secondary"
-                  disabled={deleteAccountMutation.isPending}
-                  onClick={() => setIsDeleteAccountModalOpen(true)}
-                >
-                  {deleteAccountMutation.isPending ? "Deleting..." : "Delete account"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel profile-main-panel p-6">
-          <div className="flex items-center justify-between">
-            <h3 className="profile-page-heading text-2xl font-medium text-white">My Systems</h3>
-            <div>
-              <input
-                ref={importFileRef}
-                type="file"
-                accept=".json"
-                style={{ display: "none" }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) importSystemMutation.mutate(file);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                className="btn-secondary"
-                type="button"
-                onClick={() => importFileRef.current?.click()}
-                disabled={importSystemMutation.isPending}
-                data-tutorial="import-system"
-              >
-                {importSystemMutation.isPending ? "Importing..." : "Import system"}
-              </button>
-            </div>
-          </div>
-          {systemsQuery.isLoading ? <div className="mt-3 text-zinc-500">Loading systems...</div> : null}
-          {systemsQuery.isError ? <div className="mt-3 text-zinc-400">Unable to fetch systems.</div> : null}
-          {systems.length === 0 && !systemsQuery.isLoading ? <div className="mt-3 text-zinc-500">No systems saved yet.</div> : null}
-          <div className="mt-4 grid gap-3">
-            {systems.map((system) => {
-              const isImported = system.id === lastImportedSystemId;
-              return (
-              <div
-                key={system.id}
-                className="profile-system-card p-4"
-                style={{ position: "relative" }}
-                data-tutorial={isImported ? "imported-system-card" : undefined}
-              >
-                {system.has_unseen_changes ? (
-                  <div className="profile-system-new-badge">new changes!</div>
-                ) : null}
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="profile-system-title font-semibold text-zinc-100">{system.title}</div>
-                    <div className="profile-label text-xs text-zinc-500">ID {system.id}</div>
-                  </div>
-                  <div className="ml-auto flex items-center gap-2">
-                    <button
-                      className="btn-secondary"
-                      data-tutorial={isImported ? "open-imported-system" : undefined}
-                      onClick={() => {
-                        loadGraphJson(system.graph_json);
-                        setActiveSystemId(system.id);
-                        navigate("/app/lab", {
-                          state: {
-                            systemId: system.id,
-                            systemTitle: system.title,
-                            systemGraph: system.graph_json,
-                          },
-                        });
-                      }}
-                    >
-                      Open in Lab
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      onClick={() => {
-                        if (window.confirm(`Delete system "${system.title}"?`)) {
-                          deleteSystemMutation.mutate(system.id);
-                        }
-                      }}
-                      disabled={deleteSystemMutation.isPending}
-                    >
-                      {deleteSystemMutation.isPending ? "Deleting..." : "Delete"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        </div>
-        </>
+          <>
+            <ProfileSummaryPanel
+              profile={profile}
+              initials={initials}
+              avatarUrl={avatarUrl}
+              isAdmin={isAdmin}
+              systemsCount={systems.length}
+              completionPercent={completion}
+              completedTasks={completedTasks}
+              totalTasks={totalTasks}
+              isProgressLoading={progressQuery.isLoading}
+              isProgressError={progressQuery.isError}
+              notice={profileNotice}
+              isAvatarUploading={uploadAvatarMutation.isPending}
+              isPasswordUpdating={changePasswordMutation.isPending}
+              isAccountDeleting={deleteAccountMutation.isPending}
+              onOpenAvatarModal={() => setIsAvatarModalOpen(true)}
+              onOpenPasswordModal={() => setIsPasswordModalOpen(true)}
+              onOpenDeleteAccountModal={() => setIsDeleteAccountModalOpen(true)}
+            />
+            <MySystemsPanel
+              systems={systems}
+              isLoading={systemsQuery.isLoading}
+              isError={systemsQuery.isError}
+              isImporting={importSystemMutation.isPending}
+              isDeleting={deleteSystemMutation.isPending}
+              lastImportedSystemId={lastImportedSystemId}
+              importFileRef={importFileRef}
+              onImportFile={(file) => importSystemMutation.mutate(file)}
+              onOpenSystem={(system) => {
+                loadGraphJson(system.graph_json);
+                setActiveSystemId(system.id);
+                navigate("/app/lab", {
+                  state: {
+                    systemId: system.id,
+                    systemTitle: system.title,
+                    systemGraph: system.graph_json,
+                  },
+                });
+              }}
+              onDeleteSystem={(system) => {
+                setSystemPendingDeletion({ id: system.id, title: system.title });
+              }}
+            />
+          </>
         ) : (
           <InboxPanel
             notifications={notifications}
@@ -397,9 +265,18 @@ export function ProfilePage(): JSX.Element {
               if (openNotificationId === n.id) setOpenNotificationId(null);
               deleteNotificationMutation.mutate(n.id);
             }}
-            onOpenSystem={(n) => {
-              if (!n.system_id) return;
-              navigate("/app/lab", { state: { systemId: n.system_id, systemTitle: n.system_title ?? "" } });
+            onOpenSystem={async (n) => {
+              if (!n.system_id || !userId) return;
+              const systems = await queryClient.fetchQuery({ queryKey: ["systems", userId], queryFn: fetchSystems });
+              const sys = systems.find((s) => s.id === n.system_id);
+              const graph = sys?.graph_json && typeof sys.graph_json === "object" ? sys.graph_json : undefined;
+              navigate("/app/lab", {
+                state: {
+                  systemId: n.system_id,
+                  systemTitle: (sys?.title ?? n.system_title ?? "") || "",
+                  ...(graph ? { systemGraph: graph } : {}),
+                },
+              });
             }}
           />
         )}
@@ -432,116 +309,17 @@ export function ProfilePage(): JSX.Element {
           deleteAccountMutation.mutate();
         }}
       />
+      <ConfirmDialog
+        isOpen={systemPendingDeletion !== null}
+        title="Delete system?"
+        description={`Delete "${systemPendingDeletion?.title ?? "this system"}"? This action cannot be undone.`}
+        confirmLabel="Delete system"
+        isSubmitting={deleteSystemMutation.isPending}
+        onClose={() => setSystemPendingDeletion(null)}
+        onConfirm={() => {
+          if (systemPendingDeletion) deleteSystemMutation.mutate(systemPendingDeletion.id);
+        }}
+      />
     </>
-  );
-}
-
-type InboxPanelProps = {
-  notifications: InboxNotification[];
-  isLoading: boolean;
-  isError: boolean;
-  openNotification: InboxNotification | null;
-  onOpen: (n: InboxNotification) => void;
-  onClose: () => void;
-  onDelete: (n: InboxNotification) => void;
-  onOpenSystem: (n: InboxNotification) => void;
-};
-
-function InboxPanel(props: InboxPanelProps): JSX.Element {
-  const { notifications, isLoading, isError, openNotification, onOpen, onClose, onDelete, onOpenSystem } = props;
-
-  return (
-    <div className="panel profile-main-panel p-6">
-      <div className="flex items-center justify-between">
-        <h3 className="profile-page-heading text-2xl font-medium text-white">Inbox</h3>
-        <div className="text-xs text-zinc-500">
-          {notifications.length} {notifications.length === 1 ? "message" : "messages"}
-        </div>
-      </div>
-
-      {isLoading ? <div className="mt-3 text-zinc-500">Loading inbox...</div> : null}
-      {isError ? <div className="mt-3 text-zinc-400">Unable to load notifications.</div> : null}
-      {notifications.length === 0 && !isLoading ? (
-        <div className="mt-3 text-zinc-500">Your inbox is empty. Teacher feedback on submitted systems will appear here.</div>
-      ) : null}
-
-      <ul className="mt-4 grid gap-2" role="list">
-        {notifications.map((n) => {
-          const unread = !n.read_at;
-          const date = new Date(n.created_at);
-          return (
-            <li key={n.id}>
-              <button
-                type="button"
-                className={`inbox-item w-full text-left ${unread ? "inbox-item-unread" : ""}`}
-                onClick={() => onOpen(n)}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="inbox-item-title truncate">
-                      {unread ? <span className="inbox-dot" aria-hidden="true" /> : null}
-                      {n.title}
-                    </div>
-                    <div className="inbox-item-meta truncate text-xs text-zinc-500">
-                      {n.sender_name ? `From ${n.sender_name}` : "System"} ·{" "}
-                      {isNaN(date.valueOf()) ? "" : date.toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="btn-secondary"
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(n);
-                      }}
-                      aria-label="Delete notification"
-                      title="Delete"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {openNotification ? (
-        <div className="profile-modal-overlay" onClick={onClose}>
-          <div className="profile-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="profile-modal-head">
-              <div>
-                <h3 className="profile-modal-title">{openNotification.title}</h3>
-                <p className="profile-modal-subtitle">
-                  {openNotification.sender_name ? `From ${openNotification.sender_name}` : "System"}
-                  {openNotification.system_title ? ` · "${openNotification.system_title}"` : ""}
-                </p>
-              </div>
-            </div>
-            <div className="inbox-modal-body">
-              {openNotification.body && openNotification.body.trim() ? (
-                <p className="inbox-modal-text">{openNotification.body}</p>
-              ) : (
-                <p className="inbox-modal-text text-zinc-500">
-                  Your teacher marked the system as reviewed without leaving a written comment.
-                </p>
-              )}
-            </div>
-            <div className="profile-modal-actions">
-              {openNotification.system_id ? (
-                <button className="btn-secondary" type="button" onClick={() => onOpenSystem(openNotification)}>
-                  Open system in Lab
-                </button>
-              ) : null}
-              <button className="btn-primary" type="button" onClick={onClose}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }

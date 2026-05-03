@@ -1,6 +1,3 @@
-"""Seed the database with the mandatory 'Intro' section, lessons, and tasks,
-plus all systems-thinking lessons drawn from Donella Meadows' framework."""
-
 from sqlalchemy.orm import Session
 
 from backend.db import SessionLocal
@@ -15,12 +12,6 @@ INTRO_SECTION_COLOR = "#22c55e"
 
 DEFAULT_TASK_GRAPH = {"nodes": [], "edges": []}
 
-# NOTE: the frontend `loadGraphJson` (see `store/labStore.ts`) reads node fields
-# from the top level of each node object — `kind`, `x`, `y`, `label`, `quantity`,
-# `bottleneck`, `unit`, etc. — not from a nested `data: {...}` block. If we seed
-# in the React Flow shape (`type` + `position` + `data: {...}`), everything
-# renders as a default stockNode with quantity 0 / bottleneck 0. So the task
-# template below must use the same flat layout as `toGraphJson` produces.
 SIMULATION_TEMPLATE_GRAPH = {
     "nodes": [
         {
@@ -29,8 +20,6 @@ SIMULATION_TEMPLATE_GRAPH = {
             "x": 250,
             "y": 180,
             "label": "Flow 1",
-            # Non-zero defaults so the simulation chart has something obvious to
-            # display without the learner having to type values first.
             "initial": 10,
             "quantity": 10,
             "bottleneck": 10,
@@ -106,8 +95,6 @@ INTRO_LESSONS = [
 
 
 def seed_intro(db: Session) -> None:
-    """Create the Intro section with all lessons/tasks if missing.
-    If already present, ensure all lessons exist and update template graphs."""
     section = db.query(Section).filter(Section.title == INTRO_SECTION_TITLE).first()
     if not section:
         section = Section(
@@ -120,13 +107,12 @@ def seed_intro(db: Session) -> None:
         db.flush()
 
     for spec in INTRO_LESSONS:
-        _ensure_lesson(db, section, spec)
+        upsert_intro_lesson(db, section, spec)
 
     db.commit()
 
 
-def _ensure_lesson(db: Session, section: Section, spec: dict) -> None:
-    """Create a lesson + task if missing, or update the template graph if present."""
+def upsert_intro_lesson(db: Session, section: Section, spec: dict) -> None:
     lesson = (
         db.query(Lesson)
         .filter(Lesson.section_id == section.id, Lesson.title == spec["title"])
@@ -170,10 +156,6 @@ def _ensure_lesson(db: Session, section: Section, spec: dict) -> None:
         db.add(task)
         db.flush()
     else:
-        # For intro tutorials we always keep the template + existing user copies
-        # in sync with the seed values so the learner never sees stale defaults
-        # (e.g. older 0/0 stock/flow values). Tutorial tasks are designed to be
-        # restarted anyway, so overwriting per-user edits here is acceptable.
         template = db.query(SystemModel).filter(SystemModel.id == task.system_id).first()
         if template:
             if template.graph_json != spec["task_graph"]:

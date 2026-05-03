@@ -1,5 +1,7 @@
 import { Connection, Edge, Node } from "reactflow";
 
+import type { FeedbackLoop } from "./domainTypes";
+
 export type EdgeKind = "inflow" | "outflow" | "neutral";
 export type NodeKind = "stock" | "flow" | "constant" | "variable" | "other";
 export type ControlOp = "add" | "sub" | "mul" | "div" | "pow" | "mod";
@@ -46,7 +48,9 @@ export function isControlEdge(sourceNode: Node | undefined, targetNode: Node | u
   if (!sourceNode || !targetNode) return false;
   const source = nodeKind(sourceNode);
   const target = nodeKind(targetNode);
-  return (source === "constant" || source === "variable") && target === "flow";
+  if (source === "constant") return target === "flow" || target === "variable";
+  if (source === "variable") return target === "flow" || target === "variable" || target === "constant";
+  return false;
 }
 
 export function edgeWeightByKind(kind: EdgeKind): number {
@@ -57,14 +61,81 @@ export function canConnect(sourceNode: Node | undefined, targetNode: Node | unde
   if (!sourceNode || !targetNode || sourceNode.id === targetNode.id) return false;
   const source = nodeKind(sourceNode);
   const target = nodeKind(targetNode);
-  // Standard system-dynamics rule: stocks ↔ stocks and flows ↔ flows must go through
-  // the opposite kind, never directly.
   if (source === "stock" && target === "stock") return false;
   if (source === "flow" && target === "flow") return false;
   if (source === "constant") return target === "flow" || target === "variable";
-  if (source === "variable") return target === "flow";
+  if (source === "variable") return target === "flow" || target === "variable" || target === "constant";
   if (target === "constant") return false;
   return true;
+}
+
+export function feedbackLoopEdgeOverlay(
+  sourceNode: Node | undefined,
+  targetNode: Node | undefined,
+  loops: readonly FeedbackLoop[],
+): Partial<{
+  feedbackLoop: boolean;
+  feedbackLoopType: "balancing" | "reinforcing";
+  reinforcingPolarity: string;
+}> {
+  if (!sourceNode || !targetNode) return {};
+  if (isControlEdge(sourceNode, targetNode)) return {};
+
+  const s = sourceNode.id;
+  const t = targetNode.id;
+  const sk = nodeKind(sourceNode);
+
+  for (const loop of loops) {
+    if (loop.type === "reinforcing") {
+      if (t === loop.multiplierNodeId) {
+        if (sk === "stock" || sk === "constant" || sk === "variable") {
+          return {
+            feedbackLoop: true,
+            feedbackLoopType: "reinforcing",
+            reinforcingPolarity: loop.polarity,
+          };
+        }
+      }
+      if (loop.growthLimitNodeId && t === loop.growthLimitNodeId) {
+        if (sk === "stock" || sk === "constant" || sk === "variable") {
+          return {
+            feedbackLoop: true,
+            feedbackLoopType: "reinforcing",
+            reinforcingPolarity: loop.polarity,
+          };
+        }
+      }
+      if (s === loop.multiplierNodeId && t === loop.controlledFlowId) {
+        return {
+          feedbackLoop: true,
+          feedbackLoopType: "reinforcing",
+          reinforcingPolarity: loop.polarity,
+        };
+      }
+    } else {
+      if (t === loop.discrepancyNodeId && (s === loop.goalNodeId || s === loop.stockId)) {
+        return { feedbackLoop: true, feedbackLoopType: "balancing" };
+      }
+      if (
+        t === loop.discrepancyNodeId &&
+        (sk === "constant" || sk === "variable") &&
+        s !== loop.goalNodeId &&
+        s !== loop.stockId
+      ) {
+        return { feedbackLoop: true, feedbackLoopType: "balancing" };
+      }
+      if (s === loop.discrepancyNodeId && t === loop.correctiveNodeId) {
+        return { feedbackLoop: true, feedbackLoopType: "balancing" };
+      }
+      if (s === loop.correctiveNodeId && t === loop.controlledFlowId) {
+        return { feedbackLoop: true, feedbackLoopType: "balancing" };
+      }
+      if (t === loop.correctiveNodeId && (sk === "constant" || sk === "variable") && s !== loop.discrepancyNodeId) {
+        return { feedbackLoop: true, feedbackLoopType: "balancing" };
+      }
+    }
+  }
+  return {};
 }
 
 export function isValidLabConnection(connection: Connection, nodes: Node[]): boolean {

@@ -16,13 +16,14 @@ class Settings(BaseSettings):
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     files_dir: str = "files"
-    # SMTP email settings for password reset
+    
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
     frontend_url: str = "http://localhost:5173"
+    public_api_url: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

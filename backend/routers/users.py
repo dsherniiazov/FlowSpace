@@ -14,7 +14,7 @@ from backend.utils.errors import AccessDeniedError, ValidationError
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(get_current_user)])
 
 
-def _ensure_self_or_admin(target_user_id: int, current_user: User) -> None:
+def require_same_user_or_admin(target_user_id: int, current_user: User) -> None:
     if target_user_id != current_user.id and not current_user.is_admin:
         raise AccessDeniedError("Not enough permissions")
 
@@ -22,8 +22,9 @@ def _ensure_self_or_admin(target_user_id: int, current_user: User) -> None:
 @router.get("", response_model=list[UserPublic])
 def list_users(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
 ):
+    assert current_admin.is_admin
     return UserService.list_all(db)
 
 
@@ -50,9 +51,9 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_self_or_admin(user_id, current_user)
+    require_same_user_or_admin(user_id, current_user)
     fields = data.model_dump(exclude_unset=True)
-    if "is_admin" in fields and not current_user.is_admin:
+    if any(key in fields for key in ("is_admin", "role")) and not current_user.is_admin:
         raise AccessDeniedError("Not enough permissions")
     if "password" in fields:
         fields["password_hash"] = get_password_hash(fields.pop("password"))
@@ -65,10 +66,9 @@ def delete_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_self_or_admin(user_id, current_user)
+    require_same_user_or_admin(user_id, current_user)
     user = UserService.get(db, user_id)
     remove_avatar_file(user.avatar_path)
-    # Detach owned systems before deleting the user so the FK to users is not violated.
     db.query(SystemModel).filter(SystemModel.owner_id == user_id).update({"owner_id": None})
     db.flush()
     return UserService.delete(db, user_id)
@@ -93,7 +93,7 @@ async def upload_avatar(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_self_or_admin(user_id, current_user)
+    require_same_user_or_admin(user_id, current_user)
     content = await file.read()
     new_avatar_url = save_avatar(user_id, file.filename or "", content)
     user = UserService.get(db, user_id)
@@ -111,7 +111,7 @@ def change_password(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_self_or_admin(user_id, current_user)
+    require_same_user_or_admin(user_id, current_user)
     if len(data.new_password.strip()) < 6:
         raise ValidationError("New password must be at least 6 characters")
     user = UserService.get(db, user_id)

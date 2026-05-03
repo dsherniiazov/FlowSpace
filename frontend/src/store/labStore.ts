@@ -1,30 +1,22 @@
 import { create } from "zustand";
+import type { EdgeChange, NodeChange } from "reactflow";
 import {
-  Connection,
-  Edge,
-  EdgeChange,
-  Node,
-  NodeChange,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
 } from "reactflow";
 
-import { RunStep } from "../types/api";
 import type {
   BalancingFeedbackLoop,
-  CreateBalancingFeedbackLoopPayload,
-  CreateReinforcingFeedbackLoopPayload,
-  FeedbackLoop,
   FeedbackLoopResult,
-  LabSnapshot,
-  UpdateBalancingFeedbackLoopPayload,
 } from "./lab/domainTypes";
+import { attachLabHistory } from "./lab/history";
 import {
   ControlOp,
   canConnect,
   clampFlowNonNegative,
   edgeWeightByKind,
+  feedbackLoopEdgeOverlay,
   generateEdgeId,
   inferEdgeKind,
   isControlEdge,
@@ -53,6 +45,13 @@ import {
   sanitizeLoopCollection,
   serializeGraph,
 } from "./lab/serialization";
+import {
+  filterChanges,
+  readLessonUi,
+  readSavedSimulation,
+  rebuildFlowData,
+} from "./lab/storeHelpers";
+import type { LabState } from "./lab/storeTypes";
 
 export type {
   BalancingFeedbackLoop,
@@ -66,7 +65,7 @@ export type {
   UpdateBalancingFeedbackLoopPayload,
 } from "./lab/domainTypes";
 export type { ControlOp } from "./lab/graph";
-export { CONTROL_OPS, isValidLabConnection } from "./lab/graph";
+export { CONTROL_OPS, feedbackLoopEdgeOverlay, isValidLabConnection } from "./lab/graph";
 
 export type CreateBalancingFeedbackLoopResult = FeedbackLoopResult;
 
@@ -77,101 +76,11 @@ const EDIT_LOCKED_ERROR: FeedbackLoopResult = {
   error: "Editing is locked while simulation is running.",
 };
 
-type LabState = {
-  nodes: Node[];
-  edges: Edge[];
-  feedbackLoops: FeedbackLoop[];
-  activeSystemId: number | null;
-  selectedNodeId: string | null;
-  selectedEdgeId: string | null;
-  steps: number;
-  dt: number;
-  algorithm: "euler_v2" | "rk4_v2";
-  simulationSteps: RunStep[];
-  sliderIndex: number;
-  lockEditing: boolean;
-  past: LabSnapshot[];
-  future: LabSnapshot[];
-  _isApplyingHistory: boolean;
-
-  undo: () => void;
-  redo: () => void;
-  resetHistory: () => void;
-
-  setSteps: (value: number) => void;
-  setDt: (value: number) => void;
-  setAlgorithm: (value: "euler_v2" | "rk4_v2") => void;
-  setSliderIndex: (value: number) => void;
-  setLockEditing: (value: boolean) => void;
-
-  onNodesChange: (changes: NodeChange[]) => void;
-  onEdgesChange: (changes: EdgeChange[]) => void;
-  onConnect: (connection: Connection) => void;
-
-  setSelectedNodeId: (id: string | null) => void;
-  setSelectedEdgeId: (id: string | null) => void;
-  setActiveSystemId: (id: number | null) => void;
-
-  updateSelectedNode: (patch: Record<string, unknown>) => void;
-  updateSelectedEdge: (patch: Record<string, unknown>) => void;
-  setSelectedNodeControlOp: (op: ControlOp) => void;
-
-  addStock: () => void;
-  addFlow: () => void;
-  addConstant: () => void;
-  addVariable: () => void;
-  addNodeAtPosition: (
-    type: "stock" | "flow" | "commentNode",
-    position: { x: number; y: number },
-    extraData?: Record<string, unknown>,
-  ) => string;
-
-  createBalancingFeedbackLoop: (payload: CreateBalancingFeedbackLoopPayload) => FeedbackLoopResult;
-  createReinforcingFeedbackLoop: (payload: CreateReinforcingFeedbackLoopPayload) => FeedbackLoopResult;
-  updateBalancingFeedbackLoop: (payload: UpdateBalancingFeedbackLoopPayload) => FeedbackLoopResult;
-  deleteBalancingFeedbackLoop: (id: string) => FeedbackLoopResult;
-
-  setSimulationSteps: (steps: RunStep[]) => void;
-  clearSimulation: () => void;
-  resetToInitialGraph: () => void;
-  replaceGraph: (nodes: Node[], edges: Edge[]) => void;
-  toGraphJson: () => Record<string, unknown>;
-  loadGraphJson: (graph: Record<string, unknown>) => void;
-};
-
-function filterChanges<T extends { id?: string; type: string }>(
-  changes: T[],
-  protectedIds: Set<string>,
-  extraAllowed?: Set<string>,
-): T[] {
-  return changes.filter((change) => {
-    if (!("id" in change) || change.id === undefined) return true;
-    if (!protectedIds.has(change.id)) return true;
-    if (change.type === "remove") return false;
-    if (extraAllowed && extraAllowed.has(change.type)) return true;
-    return false;
-  });
-}
-
-function rebuildFlowData(
-  node: Node,
-  baseFlowExpression: string,
-  nextFlowExpression: string,
-): Node {
-  return {
-    ...node,
-    data: {
-      ...(node.data ?? {}),
-      baseFlowExpression: String(node.data?.baseFlowExpression ?? baseFlowExpression),
-      expression: nextFlowExpression,
-    },
-  };
-}
-
 export const useLabStore = create<LabState>((set, get) => ({
   nodes: buildInitialNodes(),
   edges: INITIAL_EDGES,
   feedbackLoops: [],
+  lessonUi: null,
   activeSystemId: null,
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -183,14 +92,14 @@ export const useLabStore = create<LabState>((set, get) => ({
   lockEditing: false,
   past: [],
   future: [],
-  _isApplyingHistory: false,
+  isReplayingHistory: false,
 
   undo: () => {
     const { past, future, nodes, edges, feedbackLoops } = get();
     if (past.length === 0) return;
     const previous = past[past.length - 1];
     set({
-      _isApplyingHistory: true,
+      isReplayingHistory: true,
       past: past.slice(0, -1),
       future: [{ nodes, edges, feedbackLoops }, ...future].slice(0, HISTORY_LIMIT),
       nodes: previous.nodes,
@@ -199,14 +108,14 @@ export const useLabStore = create<LabState>((set, get) => ({
       selectedNodeId: null,
       selectedEdgeId: null,
     });
-    queueMicrotask(() => set({ _isApplyingHistory: false }));
+    queueMicrotask(() => set({ isReplayingHistory: false }));
   },
   redo: () => {
     const { past, future, nodes, edges, feedbackLoops } = get();
     if (future.length === 0) return;
     const next = future[0];
     set({
-      _isApplyingHistory: true,
+      isReplayingHistory: true,
       past: [...past, { nodes, edges, feedbackLoops }].slice(-HISTORY_LIMIT),
       future: future.slice(1),
       nodes: next.nodes,
@@ -215,7 +124,7 @@ export const useLabStore = create<LabState>((set, get) => ({
       selectedNodeId: null,
       selectedEdgeId: null,
     });
-    queueMicrotask(() => set({ _isApplyingHistory: false }));
+    queueMicrotask(() => set({ isReplayingHistory: false }));
   },
   resetHistory: () => set({ past: [], future: [] }),
 
@@ -277,13 +186,14 @@ export const useLabStore = create<LabState>((set, get) => ({
     const sourceOpRaw = String(sourceNode?.data?.op ?? "");
     const op: ControlOp = control && isControlOp(sourceOpRaw) ? (sourceOpRaw as ControlOp) : "add";
     const label = kind === "outflow" ? "-" : kind === "inflow" ? "+" : control ? opLabel(op) : "";
+    const loopEdge = feedbackLoopEdgeOverlay(sourceNode, targetNode, get().feedbackLoops);
     set({
       edges: addEdge(
         {
           ...connection,
           id: generateEdgeId(get().edges),
           label,
-          data: { kind, weight: edgeWeightByKind(kind), op },
+          data: { kind, weight: edgeWeightByKind(kind), op, ...loopEdge },
         },
         get().edges,
       ),
@@ -293,6 +203,48 @@ export const useLabStore = create<LabState>((set, get) => ({
   setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
   setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
   setActiveSystemId: (id) => set({ activeSystemId: id }),
+
+  patchNodeData: (nodeId, partialData) => {
+    if (get().lockEditing) return;
+    set((state) => {
+      const target = state.nodes.find((node) => node.id === nodeId);
+      if (!target) return state;
+      let nextFeedbackLoops = state.feedbackLoops;
+      const nextData = { ...(target.data ?? {}), ...partialData };
+      if (nodeKind(target) === "flow") {
+        if (nextData.bottleneck !== undefined) {
+          nextData.bottleneck = clampFlowNonNegative(nextData.bottleneck);
+        }
+        if (nextData.quantity !== undefined) {
+          nextData.quantity = clampFlowNonNegative(nextData.quantity);
+        }
+        const hasFlowInputPatch =
+          Object.prototype.hasOwnProperty.call(partialData, "bottleneck") ||
+          Object.prototype.hasOwnProperty.call(partialData, "quantity");
+        const flowLoops = state.feedbackLoops.filter((loop) => loop.controlledFlowId === nodeId);
+        if (flowLoops.length > 0 && hasFlowInputPatch) {
+          const baseValue = clampFlowNonNegative(
+            nextData.bottleneck ??
+              nextData.quantity ??
+              target.data?.bottleneck ??
+              target.data?.quantity ??
+              0,
+          );
+          const nextBaseFlowExpression = String(baseValue);
+          nextFeedbackLoops = state.feedbackLoops.map((loop) =>
+            loop.controlledFlowId === nodeId ? { ...loop, baseFlowExpression: nextBaseFlowExpression } : loop,
+          );
+          const loopsForFlow = nextFeedbackLoops.filter((loop) => loop.controlledFlowId === nodeId);
+          nextData.baseFlowExpression = nextBaseFlowExpression;
+          nextData.expression = rebuildFlowExpression(nextBaseFlowExpression, loopsForFlow);
+        }
+      }
+      const nextNodes = state.nodes.map((node) =>
+        node.id === nodeId ? { ...node, data: nextData } : node,
+      );
+      return { nodes: nextNodes, feedbackLoops: nextFeedbackLoops };
+    });
+  },
 
   updateSelectedNode: (patch) => {
     if (get().lockEditing) return;
@@ -741,6 +693,7 @@ export const useLabStore = create<LabState>((set, get) => ({
       })),
       edges: INITIAL_EDGES.map((edge) => ({ ...edge, data: { ...(edge.data ?? {}) } })),
       feedbackLoops: [],
+      lessonUi: null,
       simulationSteps: [],
       sliderIndex: 0,
       lockEditing: false,
@@ -753,20 +706,43 @@ export const useLabStore = create<LabState>((set, get) => ({
       nodes,
       edges,
       feedbackLoops: sanitizeLoopCollection(get().feedbackLoops, nodes, edges),
+      lessonUi: null,
       selectedNodeId: null,
       selectedEdgeId: null,
     }),
 
-  toGraphJson: () => serializeGraph(get().nodes, get().edges, get().feedbackLoops),
+  toGraphJson: () => {
+    const base = serializeGraph(get().nodes, get().edges, get().feedbackLoops);
+    const ui = get().lessonUi;
+    const simulationSteps = get().simulationSteps;
+    const simulation =
+      simulationSteps.length > 0
+        ? {
+            steps: get().steps,
+            dt: get().dt,
+            algorithm: get().algorithm,
+            timeline: simulationSteps,
+          }
+        : null;
+    if (ui && Object.keys(ui).length > 0) {
+      return simulation ? { ...base, lessonUi: ui, simulation } : { ...base, lessonUi: ui };
+    }
+    return simulation ? { ...base, simulation } : base;
+  },
 
   loadGraphJson: (graph) => {
     const { nodes, edges, feedbackLoops } = deserializeGraph(graph);
+    const savedSimulation = readSavedSimulation(graph);
     set({
-      _isApplyingHistory: true,
+      isReplayingHistory: true,
       nodes,
       edges,
       feedbackLoops,
-      simulationSteps: [],
+      lessonUi: readLessonUi(graph),
+      steps: savedSimulation.configuredSteps ?? get().steps,
+      dt: savedSimulation.dt ?? get().dt,
+      algorithm: savedSimulation.algorithm ?? get().algorithm,
+      simulationSteps: savedSimulation.steps,
       sliderIndex: 0,
       lockEditing: false,
       selectedNodeId: null,
@@ -774,41 +750,8 @@ export const useLabStore = create<LabState>((set, get) => ({
       past: [],
       future: [],
     });
-    queueMicrotask(() => set({ _isApplyingHistory: false }));
+    queueMicrotask(() => set({ isReplayingHistory: false }));
   },
 }));
 
-let pendingHistorySnapshot: LabSnapshot | null = null;
-let historyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-function flushPendingHistory(): void {
-  if (historyDebounceTimer !== null) {
-    clearTimeout(historyDebounceTimer);
-    historyDebounceTimer = null;
-  }
-  if (!pendingHistorySnapshot) return;
-  const snapshot = pendingHistorySnapshot;
-  pendingHistorySnapshot = null;
-  useLabStore.setState((state) => ({
-    past: [...state.past, snapshot].slice(-HISTORY_LIMIT),
-    future: [],
-  }));
-}
-
-useLabStore.subscribe((state, prev) => {
-  if (state._isApplyingHistory) return;
-  const structuralChange =
-    state.nodes !== prev.nodes ||
-    state.edges !== prev.edges ||
-    state.feedbackLoops !== prev.feedbackLoops;
-  if (!structuralChange) return;
-  if (pendingHistorySnapshot === null) {
-    pendingHistorySnapshot = {
-      nodes: prev.nodes,
-      edges: prev.edges,
-      feedbackLoops: prev.feedbackLoops,
-    };
-  }
-  if (historyDebounceTimer !== null) clearTimeout(historyDebounceTimer);
-  historyDebounceTimer = setTimeout(flushPendingHistory, HISTORY_DEBOUNCE_MS);
-});
+attachLabHistory(useLabStore, HISTORY_LIMIT, HISTORY_DEBOUNCE_MS);

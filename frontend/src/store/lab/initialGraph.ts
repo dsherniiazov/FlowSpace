@@ -8,19 +8,19 @@ export function buildInitialNodes(): Node[] {
     {
       id: "stock_1",
       type: "stockNode",
-      position: { x: 260, y: 180 },
+      position: { x: 140, y: 240 },
       data: { label: "Stock A", quantity: 100, unit: "", color: stockColors[0] },
     },
     {
       id: "stock_2",
       type: "stockNode",
-      position: { x: 560, y: 250 },
+      position: { x: 900, y: 240 },
       data: { label: "Stock B", quantity: 50, unit: "", color: stockColors[1] ?? stockColors[0] },
     },
     {
       id: "flow_1",
       type: "flowNode",
-      position: { x: 420, y: 130 },
+      position: { x: 520, y: 135 },
       data: { label: "Flow 1", bottleneck: 10, unit: "" },
     },
   ];

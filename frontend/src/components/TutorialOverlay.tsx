@@ -10,7 +10,9 @@ const HIGHLIGHT_PAD = 8;
 
 type Props = { onFinish?: () => void; suppressed?: boolean };
 
-export function TutorialOverlay({ onFinish, suppressed = false }: Props): JSX.Element | null {
+type OverlayProps = Props & { onAbort?: () => void | Promise<void> };
+
+export function TutorialOverlay({ onFinish, onAbort, suppressed = false }: OverlayProps): JSX.Element | null {
   const { active, lessonId, stepIndex, lessons, completeStep, previousStep, finishLesson } =
     useTutorialStore();
 
@@ -79,27 +81,40 @@ export function TutorialOverlay({ onFinish, suppressed = false }: Props): JSX.El
               })}
             </div>
           )}
-          <div className="tutorial-popup-nav">
-            <button
-              type="button"
-              className="tutorial-popup-arrow"
-              aria-label="Previous step"
-              title="Previous step"
-              onClick={previousStep}
-              disabled={!canGoBack}
-            >
-              &#x2039;
-            </button>
-            <button
-              type="button"
-              className="tutorial-popup-arrow"
-              aria-label="Next step"
-              title="Next step"
-              onClick={completeStep}
-              disabled={!canGoForward}
-            >
-              &#x203A;
-            </button>
+          <div className="tutorial-popup-actions">
+            {onAbort ? (
+              <button
+                type="button"
+                className="tutorial-popup-exit"
+                onClick={() => {
+                  void onAbort();
+                }}
+              >
+                Exit lesson
+              </button>
+            ) : <span />}
+            <div className="tutorial-popup-nav">
+              <button
+                type="button"
+                className="tutorial-popup-arrow"
+                aria-label="Previous step"
+                title="Previous step"
+                onClick={previousStep}
+                disabled={!canGoBack}
+              >
+                &#x2039;
+              </button>
+              <button
+                type="button"
+                className="tutorial-popup-arrow"
+                aria-label="Next step"
+                title="Next step"
+                onClick={completeStep}
+                disabled={!canGoForward}
+              >
+                &#x203A;
+              </button>
+            </div>
           </div>
         </div>
       )}

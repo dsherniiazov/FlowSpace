@@ -1,5 +1,6 @@
 from .users import User
 from .systems import SystemModel
+from .model_reviews import ModelReview
 from .lessons import Lesson
 from .sections import Section
 from .progress import UserProgress
@@ -8,3 +9,4 @@ from .user_task_progress import UserTaskProgress
 from .runs import SimulationRun
 from .run_steps import SimulationRunStep
 from .notifications import Notification
+from .app_settings import AppSetting

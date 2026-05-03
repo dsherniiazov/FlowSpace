@@ -1,21 +1,20 @@
 import { Link, Navigate } from "react-router-dom";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import ReactFlow, { applyNodeChanges, Edge, Handle, Node, NodeChange, NodeProps, Position } from "reactflow";
 import "reactflow/dist/style.css";
 import { useAuthStore } from "../store/authStore";
 
 type ThemeMode = "light" | "dark";
 
-// Stock nodes identical to the lab: colored border + glow + dot
-const STOCK_COLOR_A = "#3b82f6"; // blue
-const STOCK_COLOR_B = "#a855f7"; // violet
+const STOCK_COLOR_A = "#3b82f6";
+const STOCK_COLOR_B = "#a855f7";
 
 function LandingStockNode({ data }: NodeProps): JSX.Element {
   const color = String(data?.color ?? STOCK_COLOR_A);
   return (
     <div
       className="lab-stock-node"
-      style={{ borderColor: color, "--stock-color": color } as React.CSSProperties}
+      style={{ borderColor: color, "--stock-color": color } as CSSProperties}
     >
       <Handle id="tl" type="target" position={Position.Left} style={{ background: color, borderColor: color }} />
       <Handle id="sl" type="source" position={Position.Left} style={{ background: color, borderColor: color }} />
@@ -32,7 +31,6 @@ function LandingStockNode({ data }: NodeProps): JSX.Element {
   );
 }
 
-// Flow node identical to the lab: pill shape with flow accent
 function LandingFlowNode({ data }: NodeProps): JSX.Element {
   const accent = "var(--lab-flow-accent)";
   return (
@@ -76,11 +74,8 @@ const demoNodes: Node[] = [
 ];
 
 const demoEdges: Edge[] = [
-  // Demand → left side of Production
   { id: "e1", source: "stock-demand", sourceHandle: "sr", target: "flow-production", targetHandle: "tl" },
-  // right side of Production → Inventory
   { id: "e2", source: "flow-production", sourceHandle: "sr", target: "stock-inventory", targetHandle: "tl" },
-  // Inventory feedback → bottom of Production (so it doesn't cross e1/e2)
   { id: "e3", source: "stock-inventory", sourceHandle: "sb", target: "flow-production", targetHandle: "sb" },
 ];
 
@@ -155,7 +150,6 @@ export function LandingPage(): JSX.Element {
             </p>
           </section>
 
-          {/* Canvas — no card wrapper; nodes float on the page background */}
           <section className="lp2-canvas-bare">
             <ReactFlow
               className="lp2-flow"
@@ -170,7 +164,6 @@ export function LandingPage(): JSX.Element {
         </div>
       </main>
 
-      {/* Footer: no border, transparent fade */}
       <footer className="lp2-footer mono py-2 text-center text-[10px] tracking-[0.08em]">
         FLOWSPACE · DANIIAR SHERNIIAZOV · 2026
       </footer>

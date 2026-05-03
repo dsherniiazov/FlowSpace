@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -20,6 +20,11 @@ class OAuthProvidersResponse(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+
+    @field_validator("email")
+    @classmethod
+    def strip_email(cls, value: str) -> str:
+        return value.strip()
 
 
 class ResetPasswordRequest(BaseModel):

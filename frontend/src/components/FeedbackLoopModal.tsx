@@ -8,8 +8,6 @@ import {
 import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
 import type { ConnectedFlowOption } from "../pages/lab/types";
 
-export type { ConnectedFlowOption } from "../pages/lab/types";
-
 export type BalancingSubmitPayload = {
   boundaryType: BoundaryType;
   goalValue: number;
@@ -18,8 +16,6 @@ export type BalancingSubmitPayload = {
   operation: LoopOperation;
   delayEnabled: boolean;
   delaySteps: number;
-  /** Optional user-provided display name for the whole loop. Shown in the
-   *  editor panel of any auxiliary node and on the simulation chart. */
   name?: string;
   correctiveLabel?: string;
 };
@@ -116,8 +112,6 @@ export function FeedbackLoopModal({
     );
     setClampNonNegative(initialReinforcingValues?.clampNonNegative !== false);
     setMultiplierLabel(initialReinforcingValues?.multiplierLabel ?? "Multiplier");
-    // Loop name is shared across tabs; prefer whichever side of initial values
-    // carries it (edit mode will only populate one of the two).
     setLoopName(
       initialBalancingValues?.name ?? initialReinforcingValues?.name ?? "",
     );

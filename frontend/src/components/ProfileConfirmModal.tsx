@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type ProfileConfirmModalProps = {
   isOpen: boolean;
@@ -12,64 +11,17 @@ type ProfileConfirmModalProps = {
   onConfirm: () => void;
 };
 
-export function ProfileConfirmModal({
-  isOpen,
-  isSubmitting,
-  title,
-  description,
-  confirmLabel = "Yes",
-  cancelLabel = "No",
-  onClose,
-  onConfirm,
-}: ProfileConfirmModalProps): JSX.Element | null {
-  const closeDialogShortcut = useShortcutStore((state) => state.bindings.close_dialog);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (matchesShortcutEvent(event, closeDialogShortcut) && !isSubmitting) {
-        event.preventDefault();
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeDialogShortcut, isOpen, isSubmitting, onClose]);
-
-  if (!isOpen) return null;
-
+export function ProfileConfirmModal(props: ProfileConfirmModalProps): JSX.Element | null {
   return (
-    <div
-      className="profile-modal-overlay"
-      onClick={() => {
-        if (!isSubmitting) onClose();
-      }}
-    >
-      <div
-        className="profile-modal profile-modal-narrow"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="profile-confirm-modal-title"
-      >
-        <div className="profile-modal-head">
-          <div>
-            <h3 id="profile-confirm-modal-title" className="profile-modal-title">{title}</h3>
-            <p className="profile-modal-subtitle">{description}</p>
-          </div>
-        </div>
-
-        <div className="profile-modal-actions">
-          <button className="btn-secondary" type="button" onClick={onClose} disabled={isSubmitting}>
-            {cancelLabel}
-          </button>
-          <button className="btn-primary" type="button" onClick={onConfirm} disabled={isSubmitting}>
-            {isSubmitting ? "Deleting..." : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      isOpen={props.isOpen}
+      isSubmitting={props.isSubmitting}
+      title={props.title}
+      description={props.description}
+      confirmLabel={props.confirmLabel}
+      cancelLabel={props.cancelLabel}
+      onClose={props.onClose}
+      onConfirm={props.onConfirm}
+    />
   );
 }

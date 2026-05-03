@@ -11,19 +11,19 @@ from backend.utils.errors import AccessDeniedError, NotFoundError
 
 class NotificationService:
     @staticmethod
-    def _get(db: Session, notification_id: int) -> Notification:
+    def get_notification_or_raise(db: Session, notification_id: int) -> Notification:
         row = db.query(Notification).filter(Notification.id == notification_id).first()
         if not row:
             raise NotFoundError("Notification not found")
         return row
 
     @staticmethod
-    def _ensure_owner(notification: Notification, user_id: int) -> None:
+    def assert_recipient(notification: Notification, user_id: int) -> None:
         if notification.recipient_user_id != user_id:
             raise AccessDeniedError("Not your notification")
 
     @staticmethod
-    def _hydrate(db: Session, row: Notification) -> NotificationOut:
+    def to_notification_out(db: Session, row: Notification) -> NotificationOut:
         sender_name = None
         if row.sender_user_id:
             sender = db.query(User).filter(User.id == row.sender_user_id).first()
@@ -41,7 +41,7 @@ class NotificationService:
             .order_by(Notification.created_at.desc(), Notification.id.desc())
             .all()
         )
-        return [NotificationService._hydrate(db, row) for row in rows]
+        return [NotificationService.to_notification_out(db, row) for row in rows]
 
     @staticmethod
     def unread_count(db: Session, user_id: int) -> int:
@@ -56,18 +56,18 @@ class NotificationService:
 
     @staticmethod
     def mark_read(db: Session, notification_id: int, user_id: int) -> NotificationOut:
-        row = NotificationService._get(db, notification_id)
-        NotificationService._ensure_owner(row, user_id)
+        row = NotificationService.get_notification_or_raise(db, notification_id)
+        NotificationService.assert_recipient(row, user_id)
         if row.read_at is None:
             row.read_at = datetime.now(timezone.utc)
             commit_and_refresh(db, row)
-        return NotificationService._hydrate(db, row)
+        return NotificationService.to_notification_out(db, row)
 
     @staticmethod
     def delete(db: Session, notification_id: int, user_id: int) -> NotificationOut:
-        row = NotificationService._get(db, notification_id)
-        NotificationService._ensure_owner(row, user_id)
-        payload = NotificationService._hydrate(db, row)
+        row = NotificationService.get_notification_or_raise(db, notification_id)
+        NotificationService.assert_recipient(row, user_id)
+        payload = NotificationService.to_notification_out(db, row)
         db.delete(row)
         commit(db)
         return payload

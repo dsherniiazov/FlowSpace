@@ -89,7 +89,7 @@ def update_system(
     if not current_user.is_admin:
         for admin_only in ("owner_id", "is_template", "source_system_id"):
             fields.pop(admin_only, None)
-    # Admins editing another user's system flag it so the owner sees the update on next visit.
+    
     if current_user.is_admin and model.owner_id is not None and model.owner_id != current_user.id:
         fields["has_unseen_changes"] = True
     return SystemModelService.update(db, system_id, fields)

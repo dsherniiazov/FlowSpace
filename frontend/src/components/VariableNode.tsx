@@ -1,4 +1,6 @@
+import { type CSSProperties } from "react";
 import { Handle, NodeProps, Position } from "reactflow";
+import { labNodeTipProps } from "./labNodeTip";
 
 export function VariableNode({ data }: NodeProps): JSX.Element {
   const label = String(data?.label ?? "Variable");
@@ -17,6 +19,12 @@ export function VariableNode({ data }: NodeProps): JSX.Element {
   const reinforcingKRaw = Number(data?.reinforcingK ?? Number.NaN);
   const reinforcingK = Number.isFinite(reinforcingKRaw) ? reinforcingKRaw : null;
   const reinforcingMarkerLabel = String(data?.label ?? "(R)");
+  const tipProps = labNodeTipProps(String(data?.studentTooltip ?? ""));
+  const auxColor = String(data?.color ?? "").trim();
+  const auxStyle =
+    auxColor && !isDiscrepancy && !isReinforcingTextOnly
+      ? ({ borderColor: auxColor, background: `color-mix(in srgb, ${auxColor} 46%, #0a0a0a)` } as CSSProperties)
+      : undefined;
   const isBalancingDiscrepancy = isDiscrepancy && String(data?.balancingLoopType ?? "") === "B";
   const badgeOffsetXRaw = Number(data?.balancingBadgeOffsetX ?? 0);
   const badgeOffsetYRaw = Number(data?.balancingBadgeOffsetY ?? 0);
@@ -56,7 +64,11 @@ export function VariableNode({ data }: NodeProps): JSX.Element {
   }
 
   return (
-    <div className={`lab-line-node lab-variable-node ${isReinforcingTextOnly ? "lab-variable-node-text-only" : ""} ${discrepancyClass}`.trim()}>
+    <div
+      className={`lab-line-node lab-variable-node ${isReinforcingTextOnly ? "lab-variable-node-text-only" : ""} ${discrepancyClass} ${tipProps.className}`.trim()}
+      style={auxStyle}
+      data-student-tip={tipProps["data-student-tip"]}
+    >
       <Handle id="target-left" type="target" position={Position.Left} />
       <Handle id="source-left" type="source" position={Position.Left} />
       <Handle id="target-right" type="target" position={Position.Right} />

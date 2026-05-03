@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import type { TutorialStep } from "../../store/tutorialStore";
 
 export function computeHighlightRect(step: TutorialStep): DOMRect | null {
@@ -48,7 +50,7 @@ export function buildClipPath(rects: DOMRect[], pad: number): string {
 export function getPopupPosition(
   highlight: DOMRect | null,
   step?: TutorialStep | null,
-): React.CSSProperties {
+): CSSProperties {
   const vw = window.innerWidth;
   const popupW = 340;
 

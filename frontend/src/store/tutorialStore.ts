@@ -19,6 +19,9 @@ type TutorialState = {
   onFinishCallback: (() => void) | null;
   setOnFinishCallback: (cb: (() => void) | null) => void;
 
+  onAbortCallback: (() => void | Promise<void>) | null;
+  setOnAbortCallback: (cb: (() => void | Promise<void>) | null) => void;
+
   overlaySuppressed: boolean;
   setOverlaySuppressed: (v: boolean) => void;
 
@@ -42,6 +45,7 @@ export const useTutorialStore = create<TutorialState>((set, get) => ({
   ...INITIAL_STATE,
   lessons: TUTORIAL_LESSONS,
   onFinishCallback: null,
+  onAbortCallback: null,
   overlaySuppressed: false,
 
   setCachedLabState(state) {
@@ -49,6 +53,9 @@ export const useTutorialStore = create<TutorialState>((set, get) => ({
   },
   setOnFinishCallback(cb) {
     set({ onFinishCallback: cb });
+  },
+  setOnAbortCallback(cb) {
+    set({ onAbortCallback: cb });
   },
   setOverlaySuppressed(v) {
     set({ overlaySuppressed: v });

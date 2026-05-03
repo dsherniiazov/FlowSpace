@@ -177,7 +177,7 @@ const EDITOR_LESSON: TutorialLesson = {
     {
       id: "show-chart",
       targetSelector: '[data-tutorial="chart"]',
-      instruction: "This is the simulation chart — it shows all variables over time.",
+      instruction: "This is the simulation chart. It shows all variables over time.",
       trigger: "timer",
       delayMs: 3000,
       skipPopup: true,
@@ -349,7 +349,7 @@ const WORKSPACE_LESSON: TutorialLesson = {
       id: "try-pan-locked",
       targetSelector: '[data-tutorial="canvas"]',
       instruction:
-        "Try to drag the canvas again — panning is now disabled because the canvas is locked.",
+        "Try to drag the canvas again. Panning is now disabled because the canvas is locked.",
       trigger: "interact",
       interactEvent: "pointerup",
       delayMs: 1000,

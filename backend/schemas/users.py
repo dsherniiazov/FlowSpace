@@ -14,6 +14,7 @@ class UserUpdate(BaseModel):
     last_name: str | None = None
     password: str | None = None
     is_admin: bool | None = None
+    role: str | None = None
 
 
 class UserPublic(BaseModel):
@@ -24,6 +25,7 @@ class UserPublic(BaseModel):
     name: str
     last_name: str
     is_admin: bool = False
+    role: str = "student"
     avatar_path: str | None = None
 
 

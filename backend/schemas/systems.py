@@ -35,7 +35,13 @@ class SystemOut(BaseModel):
     is_template: bool | None = None
     is_submitted_for_review: bool = False
     has_unseen_changes: bool = False
+    review_status: str = "draft"
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: int | None = None
+    latest_review_id: int | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class SystemWithOwner(BaseModel):
@@ -53,4 +59,10 @@ class SystemWithOwner(BaseModel):
     is_template: bool | None = None
     is_submitted_for_review: bool = False
     has_unseen_changes: bool = False
+    review_status: str = "draft"
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by_user_id: int | None = None
+    latest_review_id: int | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None

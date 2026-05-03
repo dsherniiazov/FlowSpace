@@ -30,16 +30,12 @@ function AnimatedParticleEdgeInner({
     targetPosition,
   });
 
-  // Fall back to the colorblind-aware neutral edge CSS variable instead of a
-  // hardcoded gray so particles on edges without an explicit stroke still
-  // respect the selected colorblind palette.
   const strokeColor = (style?.stroke as string) ?? "var(--lab-edge-neutral, #6b7280)";
 
   const animate = Boolean(data?.animate);
   const kind: string = (data?.kind as string) ?? "neutral";
   const isSquare = kind !== "inflow" && kind !== "outflow";
 
-  /* ── Drain: when animate turns off, fade out over one cycle ── */
   const [visible, setVisible] = useState(false);
   const [draining, setDraining] = useState(false);
   const drainTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,12 +46,10 @@ function AnimatedParticleEdgeInner({
     prevAnimate.current = animate;
 
     if (animate && !wasOn) {
-      // turned ON → show immediately, cancel any pending drain
       if (drainTimer.current) { clearTimeout(drainTimer.current); drainTimer.current = null; }
       setDraining(false);
       setVisible(true);
     } else if (!animate && wasOn) {
-      // turned OFF → start draining (fade out, then hide)
       setDraining(true);
       drainTimer.current = setTimeout(() => {
         setVisible(false);

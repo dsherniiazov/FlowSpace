@@ -4,7 +4,14 @@ from sqlalchemy.orm import Session
 
 from backend.models.users import User
 from backend.utils.db import commit, commit_and_refresh
-from backend.utils.errors import NotFoundError
+from backend.utils.errors import NotFoundError, ValidationError
+
+
+USER_ROLES = {"student", "teacher", "admin"}
+
+
+def role_for_admin_flag(is_admin: bool) -> str:
+    return "teacher" if is_admin else "student"
 
 
 class UserService:
@@ -36,6 +43,7 @@ class UserService:
             last_name=last_name,
             password_hash=password_hash,
             is_admin=is_admin,
+            role=role_for_admin_flag(is_admin),
         )
         db.add(user)
         return commit_and_refresh(db, user)
@@ -47,6 +55,12 @@ class UserService:
     @staticmethod
     def update(db: Session, user_id: int, fields: dict) -> User:
         user = UserService.get(db, user_id)
+        if "role" in fields and fields["role"] not in USER_ROLES:
+            raise ValidationError("Invalid user role")
+        if "is_admin" in fields and "role" not in fields:
+            fields["role"] = role_for_admin_flag(bool(fields["is_admin"]))
+        if "role" in fields and "is_admin" not in fields:
+            fields["is_admin"] = fields["role"] in {"teacher", "admin"}
         for key, value in fields.items():
             setattr(user, key, value)
         return commit_and_refresh(db, user)

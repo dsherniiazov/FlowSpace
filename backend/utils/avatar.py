@@ -10,14 +10,14 @@ ALLOWED_AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"
 MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
 
 
-def _avatar_path_on_disk(avatar_url: str) -> Path | None:
+def resolved_avatar_path(avatar_url: str) -> Path | None:
     if not avatar_url or not avatar_url.startswith(AVATAR_URL_PREFIX):
         return None
     return AVATARS_DIR / avatar_url.removeprefix(AVATAR_URL_PREFIX)
 
 
 def remove_avatar_file(avatar_url: str | None) -> None:
-    path = _avatar_path_on_disk(avatar_url or "")
+    path = resolved_avatar_path(avatar_url or "")
     if path and path.exists():
         path.unlink()
 

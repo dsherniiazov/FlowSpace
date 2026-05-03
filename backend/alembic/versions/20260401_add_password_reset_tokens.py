@@ -1,10 +1,3 @@
-"""add password reset token columns to users
-
-Revision ID: 20260401_reset_tokens
-Revises: 20260318_baseline
-Create Date: 2026-04-01
-"""
-
 from typing import Sequence, Union
 
 import sqlalchemy as sa

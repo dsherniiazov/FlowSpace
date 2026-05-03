@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy import (
     Column,
     Integer,
@@ -11,6 +9,7 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
 
 from backend.db import Base
 
@@ -20,6 +19,7 @@ class SimulationRunStep(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "step_index", name="uq_simulation_run_steps_run_step"),
         Index("ix_simulation_run_steps_run_step", "run_id", "step_index"),
+        Index("ix_simulation_run_steps_run_id", "run_id"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -29,4 +29,5 @@ class SimulationRunStep(Base):
     time = Column(Float, nullable=False)
     values = Column(JSONB, nullable=False)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

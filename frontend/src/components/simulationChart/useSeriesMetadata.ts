@@ -58,13 +58,13 @@ export function useSeriesMetadata({
   nodes,
   edges,
   feedbackLoops,
-  selectedNodeId,
+  focusedNodeIds,
 }: {
   steps: RunStep[];
   nodes: Node[];
   edges: Edge[];
   feedbackLoops: FeedbackLoop[];
-  selectedNodeId: string | null;
+  focusedNodeIds: string[];
 }): SeriesMetadata {
   const discrepancyLabelMap = useMemo(
     () => buildDiscrepancyLabelMap(feedbackLoops),
@@ -103,7 +103,10 @@ export function useSeriesMetadata({
   const displayKeys = useMemo(() => {
     if (steps.length === 0) return [] as string[];
     const allKeys = Object.keys(steps[0].values).filter((k) => !k.startsWith("_"));
-    if (selectedNodeId && allKeys.includes(selectedNodeId)) return [selectedNodeId];
+    if (focusedNodeIds.length > 0) {
+      const picked = focusedNodeIds.filter((id) => allKeys.includes(id));
+      if (picked.length > 0) return picked;
+    }
     const nodeById = new Map<string, Node>();
     for (const node of nodes) nodeById.set(node.id, node);
     return allKeys.filter((key) => {
@@ -114,7 +117,7 @@ export function useSeriesMetadata({
       }
       return true;
     });
-  }, [steps, selectedNodeId, nodes, hiddenIds, connectedIds]);
+  }, [steps, focusedNodeIds, nodes, hiddenIds, connectedIds]);
 
   return { nodeIdToLabel, displayKeys };
 }

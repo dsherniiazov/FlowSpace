@@ -148,7 +148,7 @@ function styleEdge(
       targetHandle,
       className: "lab-edge-inflow",
       label: "+",
-      style: { stroke: tokens.inflow, strokeWidth: 2.2 },
+      style: { stroke: tokens.inflow, strokeWidth: 2.75 },
       labelStyle: { fill: tokens.inflow, fontWeight: 700 },
       labelBgStyle: labelBg,
       markerEnd: { type: MarkerType.ArrowClosed, color: tokens.inflow },
@@ -162,11 +162,27 @@ function styleEdge(
       targetHandle,
       className: "lab-edge-outflow",
       label: "-",
-      style: { stroke: tokens.outflow, strokeWidth: 2.2 },
+      style: { stroke: tokens.outflow, strokeWidth: 2.75 },
       labelStyle: { fill: tokens.outflow, fontWeight: 700 },
       labelBgStyle: labelBg,
       markerEnd: { type: MarkerType.ArrowClosed, color: tokens.outflow },
       data: { ...(edge.data ?? {}), kind: "outflow", weight: -1 },
+    };
+  }
+
+  if (edge.data?.feedbackLoop === true && String(edge.data?.feedbackLoopType ?? "") === "balancing") {
+    const color = tokens.balancing;
+    return {
+      ...edge,
+      sourceHandle,
+      targetHandle,
+      className: "lab-edge-balancing",
+      label: String(edge.label ?? ""),
+      style: { stroke: color, strokeWidth: 2.65 },
+      labelStyle: { fill: color, fontWeight: 700 },
+      labelBgStyle: labelBg,
+      markerEnd: { type: MarkerType.ArrowClosed, color },
+      data: { ...(edge.data ?? {}), kind: "neutral", weight: 1 },
     };
   }
 
@@ -182,7 +198,7 @@ function styleEdge(
       targetHandle,
       className: `lab-edge-reinforcing-${reinforcingPolarity}`,
       label: String(edge.label ?? ""),
-      style: { stroke: color, strokeWidth: 2.1 },
+      style: { stroke: color, strokeWidth: 2.65 },
       labelStyle: { fill: color, fontWeight: 700 },
       labelBgStyle: labelBg,
       markerEnd: { type: MarkerType.ArrowClosed, color },
@@ -191,7 +207,8 @@ function styleEdge(
   }
 
   const isControl =
-    (isConstantNode(sourceNode) || isVariableNode(sourceNode)) && isFlowNode(targetNode);
+    (isConstantNode(sourceNode) || isVariableNode(sourceNode)) &&
+    (isFlowNode(targetNode) || isVariableNode(targetNode));
   if (isControl) {
     const opRaw = String(edge.data?.op ?? "add");
     const op: ControlOp = CONTROL_OPS.some((item) => item.value === opRaw)
@@ -206,7 +223,7 @@ function styleEdge(
       label: opRaw
         ? (CONTROL_OPS.find((item) => item.value === op)?.label ?? String(edge.label ?? ""))
         : String(edge.label ?? ""),
-      style: { stroke: color, strokeWidth: 2.1 },
+      style: { stroke: color, strokeWidth: 2.65 },
       labelStyle: { fill: color, fontWeight: 700 },
       labelBgStyle: labelBg,
       markerEnd: { type: MarkerType.ArrowClosed, color },
@@ -220,7 +237,7 @@ function styleEdge(
     targetHandle,
     className: "lab-edge-neutral",
     label: String(edge.label ?? ""),
-    style: { stroke: tokens.neutral, strokeWidth: 2 },
+    style: { stroke: tokens.neutral, strokeWidth: 2.2 },
     labelStyle: { fill: tokens.neutralLabel, fontWeight: 600 },
     labelBgStyle: labelBg,
     markerEnd: { type: MarkerType.ArrowClosed, color: tokens.neutral },

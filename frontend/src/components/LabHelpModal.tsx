@@ -69,9 +69,9 @@ export function LabHelpModal({ isOpen, onClose }: LabHelpModalProps): JSX.Elemen
       >
         <header className="lab-help-head">
           <div>
-            <h3 id="lab-help-title" className="lab-help-title">Systems thinking — quick reference</h3>
+            <h3 id="lab-help-title" className="lab-help-title">Systems thinking quick reference</h3>
             <p className="lab-help-subtitle">
-              Core ideas from Donella Meadows, <em>Thinking in Systems</em>. Search or scroll.
+              Core systems thinking ideas. Search or scroll.
             </p>
           </div>
           <button
@@ -138,9 +138,7 @@ export function LabHelpModal({ isOpen, onClose }: LabHelpModalProps): JSX.Elemen
           ))}
         </div>
 
-        <footer className="lab-help-foot">
-          Source: Donella H. Meadows, <em>Thinking in Systems: A Primer</em> (Chelsea Green, 2008). Paraphrased.
-        </footer>
+        <footer className="lab-help-foot">Paraphrased quick reference for the lab.</footer>
       </div>
     </div>
   );
