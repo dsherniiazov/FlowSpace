@@ -38,9 +38,13 @@ def remove_task_leading_phrases(text: str) -> str:
     cleaned = " ".join(text.strip().split())
     prefixes = (
         "Reference graph: inspect the structure, run the simulation, and use it as an example. ",
+        "Use this finished graph. Run it and use it as an example. ",
         "Almost complete: most stock and flow nodes are placed, but a couple of stock and flow connections are missing. ",
         "Almost complete: most nodes are placed, but one formula and a couple of connections are missing. ",
+        "Almost done: most stock and flow nodes are already placed. Add the missing stock and flow links. ",
+        "Almost done: most nodes are already placed. Add the missing formula and links. ",
         "Blank canvas: build the model from the brief, run it, and explain the result. ",
+        "Blank canvas: build the model, run it, and explain what happens. ",
         "Start from an **empty graph**. ",
         "Start from an empty graph. ",
         "Start from a **blank canvas**. ",
@@ -94,6 +98,128 @@ def blank_canvas_task_body(text: str) -> str:
             cleaned = new + cleaned[len(old):]
             break
     return sentence_case(cleaned)
+
+
+SIMPLE_TEXT_REPLACEMENTS = {
+    "“": '"',
+    "”": '"',
+    "‘": "'",
+    "’": "'",
+    "–": "-",
+    "—": "-",
+    "→": " to ",
+    "←": " from ",
+    "↔": " both ways ",
+    "×": " x ",
+    "∝": " depends on ",
+    "≈": "about",
+    "°": " deg ",
+    "…": "...",
+    "  ": " ",
+}
+
+SIMPLE_PHRASE_REPLACEMENTS = {
+    "Learning objective": "Goal",
+    "bounded rationality": "limited view",
+    "Bounded rationality": "Limited view",
+    "endogenous": "inside the model",
+    "Endogenous": "Inside the model",
+    "exogenous": "outside the model",
+    "Exogenous": "Outside the model",
+    "Leverage point": "Useful change",
+    "leverage point": "useful change",
+    "pervasive": "common",
+    "Pervasive": "Common",
+    "utilize": "use",
+    "Utilize": "Use",
+    "approximately": "about",
+    "Approximately": "About",
+    "corrective action": "correction",
+    "Corrective action": "Correction",
+    "Corrective": "Correction",
+    "discrepancy": "gap",
+    "Discrepancy": "Gap",
+    "dynamic equilibrium": "steady balance",
+    "Dynamic equilibrium": "Steady balance",
+    "self enhancing": "self strengthening",
+    "Self enhancing": "Self strengthening",
+    "amplifying": "growing",
+    "Amplifying": "Growing",
+    "deteriorated": "worse",
+    "Deteriorated": "Worse",
+    "intervenor": "helper",
+    "Intervenor": "Helper",
+}
+
+
+def simplify_student_text(text: str) -> str:
+    """Keep lesson copy plain: simple punctuation, fewer special signs, shorter terms."""
+    if not isinstance(text, str) or not text:
+        return text
+    cleaned = text
+    for old, new in SIMPLE_TEXT_REPLACEMENTS.items():
+        cleaned = cleaned.replace(old, new)
+    for old, new in SIMPLE_PHRASE_REPLACEMENTS.items():
+        cleaned = cleaned.replace(old, new)
+    while "  " in cleaned:
+        cleaned = cleaned.replace("  ", " ")
+    cleaned = cleaned.replace(" .", ".").replace(" ,", ",").replace(" :", ":")
+    cleaned = cleaned.replace("( ", "(").replace(" )", ")")
+    return cleaned
+
+
+def simplify_graph_text(graph: dict) -> dict:
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if isinstance(nodes, list):
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            for key in ("label", "student_tooltip", "comment_text", "unit"):
+                if isinstance(node.get(key), str):
+                    node[key] = simplify_student_text(node[key])
+    if isinstance(edges, list):
+        for edge in edges:
+            if isinstance(edge, dict) and isinstance(edge.get("label"), str):
+                edge["label"] = simplify_student_text(edge["label"])
+    return graph
+
+
+def remove_starter_comment_nodes(graph: dict) -> dict:
+    """Remove visible note cards from task graphs, but keep boundary frames."""
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if not isinstance(nodes, list):
+        return graph
+
+    kept_nodes = [
+        node
+        for node in nodes
+        if not (
+            isinstance(node, dict)
+            and node.get("kind") == "commentNode"
+            and not node.get("boundary_mode")
+        )
+    ]
+    removed_ids = {
+        str(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict)
+        and node.get("kind") == "commentNode"
+        and not node.get("boundary_mode")
+    }
+    graph["nodes"] = kept_nodes
+
+    if removed_ids and isinstance(edges, list):
+        graph["edges"] = [
+            edge
+            for edge in edges
+            if not (
+                isinstance(edge, dict)
+                and (str(edge.get("source")) in removed_ids or str(edge.get("target")) in removed_ids)
+            )
+        ]
+    return graph
 
 
 def colorize_graph(graph: dict) -> dict:
@@ -160,7 +286,7 @@ def graph_node_size(node: dict) -> tuple[float, float]:
     return 230, 86
 
 
-def graph_nodes_overlap(a: dict, b: dict, *, padding: float = 34) -> bool:
+def graph_nodes_overlap(a: dict, b: dict, *, padding: float = 70) -> bool:
     ax, ay = float(a.get("x", 0)), float(a.get("y", 0))
     bx, by = float(b.get("x", 0)), float(b.get("y", 0))
     aw, ah = graph_node_size(a)
@@ -180,9 +306,9 @@ def beautify_graph_layout(graph: dict) -> dict:
 
     min_x = min(float(node.get("x", 0)) for node in layout_nodes)
     min_y = min(float(node.get("y", 0)) for node in layout_nodes)
-    margin = 48
-    scale_x = 1.45
-    scale_y = 1.6
+    margin = 64
+    scale_x = 1.75
+    scale_y = 1.95
 
     for node in layout_nodes:
         node["x"] = round(margin + (float(node.get("x", 0)) - min_x) * scale_x)
@@ -201,19 +327,19 @@ def beautify_graph_layout(graph: dict) -> dict:
     placed: list[dict] = []
     for node in movable:
         attempts = 0
-        while attempts < 80:
+        while attempts < 140:
             collider = next((other for other in placed if graph_nodes_overlap(other, node)), None)
             if collider is None:
                 break
             nx, ny = float(node.get("x", 0)), float(node.get("y", 0))
             cx, cy = float(collider.get("x", 0)), float(collider.get("y", 0))
             cw, ch = graph_node_size(collider)
-            move_right = cx + cw + 52 - nx
-            move_down = cy + ch + 52 - ny
+            move_right = cx + cw + 96 - nx
+            move_down = cy + ch + 96 - ny
             if move_right < move_down and nx < cx + cw:
-                node["x"] = round(nx + max(52, move_right))
+                node["x"] = round(nx + max(96, move_right))
             else:
-                node["y"] = round(ny + max(52, move_down))
+                node["y"] = round(ny + max(96, move_down))
             attempts += 1
         placed.append(node)
 
@@ -4085,55 +4211,50 @@ LESSON_EXAMPLES_1 = {
 
 
 # ===========================================================================
-# Example #2: Commons, rivalry, escalation
+# Example #2: Commons
 # ===========================================================================
 
 EXAMPLES_2_CONTENT = """\
 
-**Learning objective:** You can recognize two classic system structures, the **tragedy of the commons** (shared resource being overused) and **escalation** (two reinforcing loops locked in mutual response), and identify the most frequent mistakes that make these situations worse.
+**Learning objective:** You can recognize the **tragedy of the commons** archetype, explain why rational individual choices can damage a shared resource, and identify structural rules that restore feedback from the resource to its users.
 
-System traps are structures that produce undesirable behavior even when everyone is acting rationally. Two of the most common and destructive traps are the **tragedy of the commons** and **escalation**.
-
-### Part A: Tragedy of the Commons (Shared Resource Trap)
+System traps are structures that produce undesirable behavior even when everyone is acting rationally. The tragedy of the commons is one of the clearest examples: the structure rewards private use while spreading the cost across everyone.
 
 When many independent actors can withdraw from a single shared stock (fishery, pasture, groundwater, atmosphere, public roads), each person’s rational move is to take a little more. The result is collective overuse and eventual collapse of the resource.
 
 The reinforcing loop is: “I take more, my benefit increases.”  
 The missing balancing loop is a strong enough limit or rule on total withdrawals.
 
-### Part B: Escalation (Arms Race Trap)
+### The Basic Pattern
 
-Escalation is a pair of reinforcing loops locked together:
-- Side A increases its effort because Side B increased.
-- Side B increases its effort because Side A increased.
-
-Neither side “wants” the race, yet the structure keeps driving both upward (arms races, price wars, social media outrage cycles, tariff wars). The classic phrase is “We must not fall behind.”
+1. **Shared resource stock**, such as grass, fish, clean air, road capacity, or groundwater.
+2. **Multiple users**, each gaining a private benefit from more use.
+3. **Weak feedback**, each user feels only a fraction of the resource damage.
+4. **Overuse**, total withdrawal or pollution exceeds the resource's recovery capacity.
+5. **Resource erosion**, the damaged stock regenerates more slowly or stops serving everyone.
 
 ### Most Common Mistakes (and How to Fix Them)
 
-These two traps cause enormous real world problems. Here are the four most frequent mistakes and the systems level solutions:
+1. **Mistake: Blaming individual greed**
+   People focus only on selfishness instead of seeing that the rules reward overuse.
+   **Solution:** Redesign incentives so the rational individual choice also protects the shared stock.
 
-1. **Mistake: “It’s the other person’s fault” (blaming individuals instead of the structure)**  
-   People focus on greed, selfishness, or aggression instead of seeing the system trap.  
-   **Solution:** Redesign the structure, add rules, boundaries, or feedback that makes the rational choice also the collectively good choice.
+2. **Mistake: Treating the shared resource as infinite or exogenous**
+   The resource is left outside the model as a constant, so depletion is invisible until it is too late.
+   **Solution:** Make the shared stock **endogenous** with its own regeneration and depletion dynamics.
 
-2. **Mistake: Treating the shared resource as infinite or exogenous**  
-   The resource is left outside the model as a constant, so depletion is invisible until it’s too late.  
-   **Solution:** Make the shared stock **endogenous** (inside the model) with its own regeneration rate and visible depletion dynamics.
+3. **Mistake: Relying only on moral appeals**
+   Asking people to “use less” rarely works when the structure rewards taking more.
+   **Solution:** Add quotas, pricing, permits, access rules, shared monitoring, or property responsibility.
 
-3. **Mistake: Trying to “win” the escalation**  
-   Each side responds symmetrically (“they raised tariffs, so we raise tariffs”). This only accelerates the spiral.  
-   **Solution:** Break the reinforcing loop by changing the rules, unilateral de escalation, treaties, third party mediation, or removing the “threat signal” that triggers the other side.
-
-4. **Mistake: Relying only on moral appeals or education**  
-   Asking people to “use less” or “be reasonable” rarely works when the incentive structure rewards overuse or escalation.  
-   **Solution:** Change the incentives and rules of the game (quotas, privatization with responsibility, clear property rights, or mutual disarmament agreements).
+4. **Mistake: Ignoring sinks**
+   Commons are not only sources like fish or grass; clean air and water can also be overused as pollution sinks.
+   **Solution:** Model the sink as a stock with inflows, outflows, and recovery limits.
 
 > **Key insight:**  
-> “The tragedy of the commons arises when there is a shared resource with no rules or enforcement limiting access. Escalation is a pair of reinforcing loops in which each actor’s action is a response to the other’s. In both cases the system structure, not the character of the players, produces the problem.”
+> “The tragedy of the commons arises when there is a shared resource with no rules or enforcement limiting access. The system structure, not simply the character of the users, produces the problem.”
 
 ### In the Lab
-
 
 - **Task 1: Overgrazing pasture**  
   Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.
@@ -4143,6 +4264,56 @@ These two traps cause enormous real world problems. Here are the four most frequ
   Build an urban air commons model with clean air as shared stock and private emissions as drains.
 - **Task 4: Public road traffic**  
   Build a road capacity commons model where individual route choices create collective congestion.
+
+**Practical takeaway:**
+Once you see a commons trap, stop asking only “Who is using too much?” and start asking “What feedback is missing from the shared stock to the users?”
+"""
+
+
+# ===========================================================================
+# Example #3: Escalation
+# ===========================================================================
+
+ESCALATION_CONTENT = """\
+
+**Learning objective:** You can recognize the **escalation** archetype, trace the cross-reinforcing loops between two actors, and identify interventions that break the race.
+
+Escalation happens when two or more actors react to each other. One side increases its action, so the other side also increases its action. This creates a cycle where both sides continue to grow their response.
+
+The pattern can appear in arms races, price wars, social media outrage, advertising competition, political rhetoric, or any setting where each actor's goal is relative to the other actor's current level.
+
+### The Basic Pattern
+
+1. **Actor A stock**, such as A's military power, discount depth, outrage, or advertising spend.
+2. **Actor B stock**, the matching level for the other side.
+3. **A response loop**, A increases because B increased.
+4. **B response loop**, B increases because A increased.
+5. **Runaway race**, both sides climb even if both would prefer a lower-cost outcome.
+
+Neither side necessarily wants the race. The structure keeps driving both upward because “not falling behind” becomes the decision rule.
+
+### Most Common Mistakes (and How to Fix Them)
+
+1. **Mistake: Trying to win the escalation**
+   Each side responds symmetrically: they raised, so we raise.
+   **Solution:** Break the reinforcing loop instead of feeding it.
+
+2. **Mistake: Treating the other side as the only cause**
+   Each actor sees its own action as defensive and the other's action as aggressive.
+   **Solution:** Map both loops so each side can see how its own response becomes the other's trigger.
+
+3. **Mistake: Ignoring reaction speed**
+   Fast reactions can amplify the race before anyone has time to check whether the threat is real.
+   **Solution:** Add delay, verification, negotiation, or cooling-off rules.
+
+4. **Mistake: Removing only one symptom**
+   If the cross-response rule remains, the race restarts in a new form.
+   **Solution:** Add balancing loops: treaties, price floors, platform moderation rules, shared standards, or third-party mediation.
+
+> **Key insight:**
+> Escalation is a pair of reinforcing loops in which each actor's action is a response to the other actor. The leverage is to change the response rule, not to push harder inside the race.
+
+### In the Lab
 
 - **Task 1: Arms race**  
   Use the finished arms race graph to trace the two cross reinforcing buildup paths.
@@ -4154,7 +4325,7 @@ These two traps cause enormous real world problems. Here are the four most frequ
   Build an advertising arms race model with rival attention or ad spend stocks and cross response flows.
 
 **Practical takeaway:**  
-Once you see these traps, you stop asking “Who is to blame?” and start asking “How can we change the structure?” That single shift is one of the most powerful moves in systems thinking.
+Once you see escalation, stop asking only “Who started it?” and ask “Which response rule keeps the loop running?”
 """
 TRAGEDY_DEMO = compose_graph(
     nodes=[
@@ -4465,12 +4636,12 @@ for _node in ESCALATION_PRICE_WAR_ALMOST["nodes"]:
     _node["student_tooltip"] = _tooltip
 
 LESSON_EXAMPLES_2 = {
-    "title": "Tragedy of the Commons and Escalation",
+    "title": "Tragedy of the Commons",
     "order_index": 1,
     "content_markdown": EXAMPLES_2_CONTENT,
     "tasks": [
         {
-            "title": "Commons: Task 1: Overgrazing pasture",
+            "title": "Task 1: Overgrazing pasture",
             "description": (
                 "Simulate the **shared pasture** commons. Identify the **deep blue grass stock**, **teal regrowth** loop, "
                 "and **orange farmer** loops. Explain overgrazing as a structural outcome."
@@ -4479,7 +4650,7 @@ LESSON_EXAMPLES_2 = {
             "order_index": 0,
         },
         {
-            "title": "Commons: Task 2: Overfishing the ocean",
+            "title": "Task 2: Overfishing the ocean",
             "description": (
                 "Re-interpret the same diagram as **fish biomass** vs **fishing fleets**. "
                 "Write 2 to 3 sentences on how parallel private incentives deplete a mobile commons."
@@ -4488,7 +4659,7 @@ LESSON_EXAMPLES_2 = {
             "order_index": 1,
         },
         {
-            "title": "Commons: Task 3: City air pollution",
+            "title": "Task 3: City air pollution",
             "description": (
                 "Map the commons structure to **urban air quality**: name the shared stock, the private **emissions** pressures, "
                 "and one **balancing** process (e.g., wind dispersion, regulation) you could model next."
@@ -4497,7 +4668,7 @@ LESSON_EXAMPLES_2 = {
             "order_index": 2,
         },
         {
-            "title": "Commons: Task 4: Public road traffic jam",
+            "title": "Task 4: Public road traffic jam",
             "description": (
                 "Explain **road capacity** as a commons and **route choice** as reinforcing private use. "
                 "Produce one policy lever (pricing, transit, coordination) that changes the structure."
@@ -4505,42 +4676,909 @@ LESSON_EXAMPLES_2 = {
             "graph": TRAGEDY_DEMO,
             "order_index": 3,
         },
+    ],
+}
+
+LESSON_EXAMPLES_3 = {
+    "title": "Escalation",
+    "order_index": 2,
+    "content_markdown": ESCALATION_CONTENT,
+    "tasks": [
         {
-            "title": "Escalation: Task 1: Arms race",
+            "title": "Task 1: Arms race",
             "description": (
                 "Run the **two-country escalation** model ~50 to 70 steps. Identify the **orange cross-links** and predict "
                 "long-run behavior if neither side changes the rules."
             ),
             "graph": ESCALATION_DEMO,
-            "order_index": 4,
+            "order_index": 0,
         },
         {
-            "title": "Escalation: Task 2: Price war",
+            "title": "Task 2: Price war",
             "description": (
                 "Relabel the escalation stocks mentally as **Company A vs B price aggression** (or discount depth). "
                 "How would a **third-party platform** or **collusion guardrail** weaken the loop?"
             ),
             "graph": ESCALATION_DEMO,
-            "order_index": 5,
+            "order_index": 1,
         },
         {
-            "title": "Escalation: Task 3: Social media outrage",
+            "title": "Task 3: Social media outrage",
             "description": (
                 "Map the model to **outrage intensity** on two communities feeding each other. "
                 "Name one intervention that removes the **threat signal** or slows reaction delay."
             ),
             "graph": ESCALATION_DEMO,
-            "order_index": 6,
+            "order_index": 2,
         },
         {
-            "title": "Escalation: Task 4: Advertising competition",
+            "title": "Task 4: Advertising competition",
             "description": (
                 "Interpret the stocks as **rival ad spend** or **attention capture**. "
                 "Explain why both sides can rationally climb together even when total profit falls."
             ),
             "graph": ESCALATION_DEMO,
-            "order_index": 7,
+            "order_index": 3,
         },
+    ],
+}
+
+
+# ===========================================================================
+# Example #4: Shifting the Burden
+# ===========================================================================
+
+SHIFTING_BURDEN_CONTENT = """\
+
+**Learning objective:** You can recognize the **Shifting the Burden** archetype, separate a symptom-relieving fix from a deeper capability-building solution, and explain why the quick fix can create dependence.
+
+This archetype appears when a system has a real problem, but the most visible response only reduces the symptom. The deeper cause remains, so the problem returns. Because the quick fix appears to work, people invest less attention in the slower fundamental solution. If the quick fix also weakens the system's own capacity, the system becomes dependent on the intervention.
+
+### The Basic Pattern
+
+1. **Problem symptom**, something visible is uncomfortable or urgent.
+2. **Symptomatic solution**, a fast response reduces the pain now.
+3. **Fundamental solution**, a slower response would strengthen the system's own ability to handle the problem.
+4. **Side effect**, repeated use of the quick fix weakens the fundamental capacity.
+5. **Dependence**, the weaker the internal capacity becomes, the more the system needs the quick fix.
+
+The important modeling move is to draw both paths. If the model contains only the quick fix, the graph can look successful for a few steps even while it is making the long-term structure worse.
+
+### Examples
+
+Meadows describes this trap as addiction, dependence, or shifting the burden to an intervenor: fertilizers can hide declining soil fertility, subsidies can hide an ineffective business model, and medicine can hide lifestyle causes of ill health. The same pattern appears in school work. Cramming before every exam can reduce immediate pressure, but it does not build a durable learning routine. Over time the student needs more cramming because the deeper study habit has not improved.
+
+### How to Escape
+
+The leverage point is not to remove every quick fix immediately. Sometimes a symptom needs relief. The key is to pair short-term relief with a real investment in the fundamental solution, then gradually reduce dependence on the symptomatic response.
+
+Ask:
+- What capacity should the system build for itself?
+- Does the quick fix weaken that capacity?
+- Which delayed investment would make the quick fix less necessary next time?
+
+### In the Lab
+
+- **Task 1: Cramming vs study habit**
+  Use the finished student graph to trace learning pressure, cramming relief, steady learning, habit building, and dependency drain.
+- **Task 2: Sleep aid dependence**
+  Finish the sleep model by adding the missing sleep-aid response formula and reconnecting the quick-fix path.
+- **Task 3: Farm fertilizer dependence**
+  Build a farm model where fertilizer increases short-term yield but long-term soil health must be rebuilt.
+- **Task 4: Help desk dependency**
+  Build a team model where an expert helper solves tickets quickly but slows the team's own troubleshooting capacity.
+"""
+
+SHIFTING_BURDEN_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "sb_pressure",
+            "Learning pressure",
+            420,
+            280,
+            quantity=68,
+            unit="index",
+            student_tooltip="Problem symptom: pressure rises when new material arrives faster than real learning absorbs it.",
+        ),
+        make_stock_node(
+            "sb_habit",
+            "Study habit capacity",
+            650,
+            280,
+            quantity=26,
+            unit="index",
+            student_tooltip="Fundamental capacity: durable study habits reduce pressure without creating dependence.",
+        ),
+        make_flow_node(
+            "sb_new",
+            "New material and deadlines",
+            140,
+            280,
+            bottleneck=8,
+            unit="index/step",
+            student_tooltip="Inflow: new work adds pressure.",
+        ),
+        make_flow_node(
+            "sb_quick_flow",
+            "Cramming relief",
+            720,
+            410,
+            bottleneck=0,
+            expression="max(0, (0) + (sb_quick))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Symptomatic solution: cramming reduces pressure quickly but does not build capacity.",
+        ),
+        make_flow_node(
+            "sb_study_relief",
+            "Steady learning relief",
+            140,
+            410,
+            bottleneck=0,
+            expression="max(0, (0) + (sb_relief))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Fundamental relief: a stronger habit lowers pressure every step.",
+        ),
+        make_flow_node(
+            "sb_habit_build",
+            "Practice builds habit",
+            430,
+            420,
+            bottleneck=0,
+            expression="max(0, (0) + (sb_fundamental))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Slow fundamental investment: deliberate practice builds the capacity stock.",
+        ),
+        make_flow_node(
+            "sb_habit_drain",
+            "Cramming dependency drain",
+            880,
+            280,
+            bottleneck=0,
+            expression="max(0, (0) + (sb_dependency))",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Side effect: relying on cramming weakens the normal study routine.",
+        ),
+        make_constant_node(
+            "sb_goal",
+            "Comfortable pressure",
+            420,
+            80,
+            quantity=18,
+            loop_id="sb_l_quick",
+            loop_role="goal",
+            fb_type="balancing",
+            unit="index",
+            color=C_AUX,
+            student_tooltip="Goal: pressure level that still feels manageable.",
+        ),
+        make_variable_node(
+            "sb_gap",
+            "Pressure gap",
+            420,
+            175,
+            expression="(sb_pressure > sb_goal ? (sb_pressure - sb_goal) : 0)",
+            loop_id="sb_l_quick",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Symptom size: how far pressure sits above the comfort goal.",
+        ),
+        make_variable_node(
+            "sb_quick",
+            "Quick fix: cram harder",
+            720,
+            180,
+            expression="(max(0, (sb_gap))) / (3)",
+            loop_id="sb_l_quick",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Fast balancing response: large pressure creates a large cramming response.",
+        ),
+        make_variable_node(
+            "sb_fundamental",
+            "Slow fix: build routine",
+            430,
+            520,
+            expression='(max(0, (delay("sb_gap", 4)))) / (8)',
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Fundamental solution: delayed and slower, but it strengthens the system.",
+        ),
+        make_variable_node(
+            "sb_relief",
+            "Habit-based relief",
+            140,
+            520,
+            expression="(0.14) * (sb_habit)",
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Capacity translated into steady pressure relief.",
+        ),
+        make_variable_node(
+            "sb_dependency",
+            "Side effect: habit erosion",
+            880,
+            180,
+            expression="(0.05) * (sb_quick)",
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Dependency path: the more cramming is used, the more the study habit erodes.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("sb_e1", "sb_new", "sb_pressure"),
+        make_outflow_edge("sb_e2", "sb_pressure", "sb_quick_flow"),
+        make_outflow_edge("sb_e3", "sb_pressure", "sb_study_relief"),
+        make_inflow_edge("sb_e4", "sb_habit_build", "sb_habit"),
+        make_outflow_edge("sb_e5", "sb_habit", "sb_habit_drain"),
+        make_feedback_edge("sb_e6", "sb_goal", "sb_gap", fb_type="balancing"),
+        make_feedback_edge("sb_e7", "sb_pressure", "sb_gap", fb_type="balancing"),
+        make_feedback_edge("sb_e8", "sb_gap", "sb_quick", fb_type="balancing"),
+        make_feedback_edge("sb_e9", "sb_quick", "sb_quick_flow", op="add", fb_type="balancing"),
+        make_feedback_edge("sb_e10", "sb_gap", "sb_fundamental"),
+        make_feedback_edge("sb_e11", "sb_fundamental", "sb_habit_build", op="add"),
+        make_feedback_edge("sb_e12", "sb_habit", "sb_relief"),
+        make_feedback_edge("sb_e13", "sb_relief", "sb_study_relief", op="add"),
+        make_feedback_edge("sb_e14", "sb_quick", "sb_dependency"),
+        make_feedback_edge("sb_e15", "sb_dependency", "sb_habit_drain", op="add"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "sb_l_quick",
+            "sb_pressure",
+            "sb_goal",
+            "sb_gap",
+            "sb_quick",
+            "sb_quick_flow",
+            ["sb_e6", "sb_e7", "sb_e8", "sb_e9"],
+            boundary_type="upper",
+            goal_value=18,
+            adjustment_time=3,
+        )
+    ],
+)
+
+SHIFTING_BURDEN_SLEEP_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "sbs_todo",
+            "Almost done: sleep debt, natural sleep capacity, routine practice, and the side-effect drain are placed. Add the sleep-aid response formula and reconnect the quick-fix path before running.",
+            20,
+            20,
+        ),
+        make_stock_node("sbs_debt", "Sleep debt", 420, 280, quantity=62, unit="index"),
+        make_stock_node("sbs_capacity", "Natural sleep capacity", 650, 280, quantity=32, unit="index"),
+        make_flow_node("sbs_stress", "Stress and late work", 140, 280, bottleneck=7, unit="index/step"),
+        make_flow_node(
+            "sbs_aid_flow",
+            "Sleep aid relief",
+            720,
+            410,
+            bottleneck=0,
+            expression="",
+            base_flow_expression="0",
+            unit="index/step",
+            student_tooltip="Finish this flow so the sleep-aid response reduces sleep debt.",
+        ),
+        make_flow_node(
+            "sbs_routine_flow",
+            "Routine sleep relief",
+            140,
+            410,
+            bottleneck=0,
+            expression="max(0, (0) + (sbs_relief))",
+            base_flow_expression="0",
+            unit="index/step",
+        ),
+        make_flow_node(
+            "sbs_build",
+            "Sleep hygiene practice",
+            430,
+            420,
+            bottleneck=0,
+            expression="max(0, (0) + (sbs_routine))",
+            base_flow_expression="0",
+            unit="index/step",
+        ),
+        make_flow_node(
+            "sbs_drain",
+            "Tolerance / habit drain",
+            880,
+            280,
+            bottleneck=0,
+            expression="max(0, (0) + (sbs_side))",
+            base_flow_expression="0",
+            unit="index/step",
+        ),
+        make_constant_node("sbs_goal", "Rested target", 420, 80, quantity=15, unit="index"),
+        make_variable_node(
+            "sbs_gap",
+            "Sleep-debt gap",
+            420,
+            175,
+            expression="(sbs_debt > sbs_goal ? (sbs_debt - sbs_goal) : 0)",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "sbs_aid",
+            "Sleep-aid response (finish)",
+            720,
+            180,
+            expression="",
+            color=C_AUX,
+            student_tooltip="Add a formula such as max(0, gap) divided by an adjustment time.",
+        ),
+        make_variable_node(
+            "sbs_routine",
+            "Routine-building response",
+            430,
+            520,
+            expression='(max(0, (delay("sbs_gap", 4)))) / (8)',
+            color=C_AUX,
+        ),
+        make_variable_node("sbs_relief", "Capacity-based relief", 140, 520, expression="(0.14) * (sbs_capacity)", color=C_AUX),
+        make_variable_node("sbs_side", "Side effect on natural sleep", 880, 180, expression="(0.04) * (sbs_aid)", color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("sbs_e1", "sbs_stress", "sbs_debt"),
+        make_outflow_edge("sbs_e2", "sbs_debt", "sbs_aid_flow"),
+        make_outflow_edge("sbs_e3", "sbs_debt", "sbs_routine_flow"),
+        make_inflow_edge("sbs_e4", "sbs_build", "sbs_capacity"),
+        make_outflow_edge("sbs_e5", "sbs_capacity", "sbs_drain"),
+        make_feedback_edge("sbs_e6", "sbs_goal", "sbs_gap"),
+        make_feedback_edge("sbs_e7", "sbs_debt", "sbs_gap"),
+        make_feedback_edge("sbs_e10", "sbs_gap", "sbs_routine"),
+        make_feedback_edge("sbs_e11", "sbs_routine", "sbs_build", op="add"),
+        make_feedback_edge("sbs_e12", "sbs_capacity", "sbs_relief"),
+        make_feedback_edge("sbs_e13", "sbs_relief", "sbs_routine_flow", op="add"),
+        make_feedback_edge("sbs_e14", "sbs_aid", "sbs_side"),
+        make_feedback_edge("sbs_e15", "sbs_side", "sbs_drain", op="add"),
+    ],
+)
+
+LESSON_SHIFTING_BURDEN = {
+    "title": "Shifting the Burden",
+    "order_index": 3,
+    "content_markdown": SHIFTING_BURDEN_CONTENT,
+    "tasks": [
+        {
+            "title": "Task 1: Cramming vs study habit",
+            "description": (
+                "Run the student model. Trace the quick cramming relief path, the slower study-habit path, "
+                "and the side effect that makes the quick fix more attractive next time."
+            ),
+            "graph": SHIFTING_BURDEN_DEMO,
+            "order_index": 0,
+        },
+        {
+            "title": "Task 2: Sleep aid dependence",
+            "description": (
+                "Finish the sleep model. Sleep debt, natural sleep capacity, and routine practice are placed; "
+                "add the missing sleep-aid response formula and reconnect the quick-fix path."
+            ),
+            "graph": SHIFTING_BURDEN_SLEEP_ALMOST,
+            "order_index": 1,
+        },
+        {
+            "title": "Task 3: Farm fertilizer dependence",
+            "description": (
+                "Build a farm model where fertilizer gives a quick yield boost while soil health needs slower rebuilding."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 2,
+        },
+        {
+            "title": "Task 4: Help desk dependency",
+            "description": (
+                "Build a support model where an expert solves tickets quickly but repeated escalation slows the team's own troubleshooting capacity."
+            ),
+            "graph": EMPTY_GRAPH,
+            "order_index": 3,
+        },
+    ],
+}
+
+
+# ===========================================================================
+# Example #5: Fixes that Fail
+# ===========================================================================
+
+FIXES_FAIL_CONTENT = """\
+
+**Learning objective:** You can identify a **Fixes that Fail** structure, distinguish immediate improvement from delayed side effects, and explain why a policy can look successful before it makes the original problem return.
+
+Fixes that Fail is a common system archetype. A problem appears. A fix is applied. The fix reduces the problem in the short term. Later, a side effect created by the fix feeds back into the same problem and makes it return, sometimes worse than before.
+
+### The Basic Pattern
+
+1. **Problem symptom**, a stock or condition is outside its desired range.
+2. **Fix**, a balancing response pushes the symptom down.
+3. **Delay**, the side effect is not visible immediately.
+4. **Unintended consequence**, the fix changes incentives, capacity, or behavior.
+5. **Return of the problem**, the delayed side effect adds pressure back into the original stock.
+
+The trap is persuasive because the early chart looks good. If the simulation stops too soon, students may conclude that the fix worked. Running longer reveals the delayed feedback.
+
+### Examples
+
+Meadows discusses policy resistance and fixes that fail as cases where energetic interventions keep producing the same unwanted behavior. A familiar city example is road building. More road capacity can reduce congestion for a while, but easier driving attracts more car trips. After a delay, congestion returns. Similar structures appear in pesticide use, short-term discounts, debt refinancing, and overtime used to solve schedule pressure.
+
+### How to Escape
+
+Do not judge a fix only by its first result. Ask what behavior the fix encourages, what capacity it changes, and what delayed feedback will return later. Stronger solutions usually reduce the original pressure directly or change the incentive that creates it.
+
+### In the Lab
+
+- **Task 1: More roads, more traffic**
+  Use the finished road model to trace congestion relief, road capacity, induced demand, and delayed return of congestion.
+- **Task 2: Pesticide rebound**
+  Finish the pest model by adding the missing pesticide response and rebound signal.
+- **Task 3: Overtime in a software project**
+  Build a model where overtime reduces backlog now but creates fatigue and rework later.
+- **Task 4: Retail discount trap**
+  Build a model where discounts lift sales now but train customers to wait for future discounts.
+"""
+
+FIXES_FAIL_DEMO = compose_graph(
+    nodes=[
+        make_stock_node(
+            "ff_congestion",
+            "Traffic congestion",
+            420,
+            280,
+            quantity=70,
+            unit="index",
+            student_tooltip="Problem stock: congestion initially drops when road capacity is added, then returns through induced demand.",
+        ),
+        make_stock_node(
+            "ff_capacity",
+            "Road capacity",
+            650,
+            280,
+            quantity=45,
+            unit="index",
+            student_tooltip="Capacity stock: the fix expands it, but more capacity also attracts more trips after a delay.",
+        ),
+        make_flow_node("ff_trips", "Trip growth / demand", 140, 280, bottleneck=0, expression="max(0, (0) + (ff_induced))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("ff_relief", "Congestion relief from new lanes", 720, 410, bottleneck=0, expression="max(0, (0) + (ff_fix))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("ff_lanes", "Build more lanes", 430, 420, bottleneck=0, expression="max(0, (0) + (ff_fix))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("ff_wear", "Capacity bottlenecks", 880, 280, bottleneck=1.2, unit="index/step"),
+        make_constant_node("ff_goal", "Acceptable congestion", 420, 80, quantity=25, loop_id="ff_l1", loop_role="goal", fb_type="balancing", unit="index"),
+        make_variable_node(
+            "ff_gap",
+            "Congestion gap",
+            420,
+            175,
+            expression="(ff_congestion > ff_goal ? (ff_congestion - ff_goal) : 0)",
+            loop_id="ff_l1",
+            loop_role="discrepancy",
+            fb_type="balancing",
+            color=C_AUX,
+        ),
+        make_variable_node(
+            "ff_fix",
+            "Road-building fix",
+            720,
+            180,
+            expression="(max(0, (ff_gap))) / (4)",
+            loop_id="ff_l1",
+            loop_role="correctiveAction",
+            fb_type="balancing",
+            color=C_AUX,
+            student_tooltip="Short-term fix: more lanes reduce the congestion stock.",
+        ),
+        make_variable_node(
+            "ff_induced",
+            "Induced car demand (delayed)",
+            140,
+            170,
+            expression='(6) + (0.08) * delay("ff_capacity", 5)',
+            unit="index/step",
+            color=C_AUX,
+            student_tooltip="Delayed side effect: easier driving attracts more trips later.",
+        ),
+    ],
+    edges=[
+        make_inflow_edge("ff_e1", "ff_trips", "ff_congestion"),
+        make_outflow_edge("ff_e2", "ff_congestion", "ff_relief"),
+        make_inflow_edge("ff_e3", "ff_lanes", "ff_capacity"),
+        make_outflow_edge("ff_e4", "ff_capacity", "ff_wear"),
+        make_feedback_edge("ff_e5", "ff_goal", "ff_gap", fb_type="balancing"),
+        make_feedback_edge("ff_e6", "ff_congestion", "ff_gap", fb_type="balancing"),
+        make_feedback_edge("ff_e7", "ff_gap", "ff_fix", fb_type="balancing"),
+        make_feedback_edge("ff_e8", "ff_fix", "ff_relief", op="add", fb_type="balancing"),
+        make_feedback_edge("ff_e9", "ff_fix", "ff_lanes", op="add"),
+        make_feedback_edge("ff_e10", "ff_capacity", "ff_induced"),
+        make_feedback_edge("ff_e11", "ff_induced", "ff_trips", op="add"),
+    ],
+    feedback_loops=[
+        make_balancing_loop(
+            "ff_l1",
+            "ff_congestion",
+            "ff_goal",
+            "ff_gap",
+            "ff_fix",
+            "ff_relief",
+            ["ff_e5", "ff_e6", "ff_e7", "ff_e8"],
+            boundary_type="upper",
+            goal_value=25,
+            adjustment_time=4,
+        )
+    ],
+)
+
+FIXES_FAIL_PEST_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node(
+            "ffp_todo",
+            "Almost done: pests, pesticide kill, predator control, and rebound pressure are placed. Add the pesticide response formula and reconnect the delayed rebound signal.",
+            20,
+            20,
+        ),
+        make_stock_node("ffp_pests", "Crop pest population", 420, 280, quantity=66, unit="index"),
+        make_stock_node("ffp_predators", "Natural predator capacity", 650, 280, quantity=36, unit="index"),
+        make_flow_node("ffp_growth", "Pest reproduction", 140, 280, bottleneck=8, unit="index/step"),
+        make_flow_node("ffp_spray_flow", "Pesticide kill", 720, 410, bottleneck=0, expression="", base_flow_expression="0", unit="index/step"),
+        make_flow_node("ffp_pred_flow", "Natural predator control", 140, 410, bottleneck=0, expression="max(0, (0) + (ffp_control))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("ffp_pred_loss", "Predator loss from spraying", 880, 280, bottleneck=0, expression="max(0, (0) + (ffp_side))", base_flow_expression="0", unit="index/step"),
+        make_constant_node("ffp_goal", "Tolerable pest level", 420, 80, quantity=24, unit="index"),
+        make_variable_node("ffp_gap", "Pest gap", 420, 175, expression="(ffp_pests > ffp_goal ? (ffp_pests - ffp_goal) : 0)", color=C_AUX),
+        make_variable_node("ffp_spray", "Pesticide response (finish)", 720, 180, expression="", color=C_AUX),
+        make_variable_node("ffp_control", "Predator control strength", 140, 520, expression="(0.15) * (ffp_predators)", color=C_AUX),
+        make_variable_node("ffp_side", "Delayed predator damage", 880, 180, expression='(0.05) * delay("ffp_spray", 4)', color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("ffp_e1", "ffp_growth", "ffp_pests"),
+        make_outflow_edge("ffp_e2", "ffp_pests", "ffp_spray_flow"),
+        make_outflow_edge("ffp_e3", "ffp_pests", "ffp_pred_flow"),
+        make_outflow_edge("ffp_e4", "ffp_predators", "ffp_pred_loss"),
+        make_feedback_edge("ffp_e5", "ffp_goal", "ffp_gap"),
+        make_feedback_edge("ffp_e6", "ffp_pests", "ffp_gap"),
+        make_feedback_edge("ffp_e9", "ffp_predators", "ffp_control"),
+        make_feedback_edge("ffp_e10", "ffp_control", "ffp_pred_flow", op="add"),
+        make_feedback_edge("ffp_e11", "ffp_spray", "ffp_side"),
+        make_feedback_edge("ffp_e12", "ffp_side", "ffp_pred_loss", op="add"),
+    ],
+)
+
+LESSON_FIXES_THAT_FAIL = {
+    "title": "Fixes that Fail",
+    "order_index": 4,
+    "content_markdown": FIXES_FAIL_CONTENT,
+    "tasks": [
+        {"title": "Task 1: More roads, more traffic", "description": "Run the road model long enough to see the delayed side effect. Identify congestion relief, capacity growth, and induced demand.", "graph": FIXES_FAIL_DEMO, "order_index": 0},
+        {"title": "Task 2: Pesticide rebound", "description": "Finish the pest model. Pest level, predator capacity, control, and side-effect drain are placed; add the pesticide response and rebound links.", "graph": FIXES_FAIL_PEST_ALMOST, "order_index": 1},
+        {"title": "Task 3: Overtime in a software project", "description": "Build a project model where overtime reduces backlog now but creates fatigue and rework later.", "graph": EMPTY_GRAPH, "order_index": 2},
+        {"title": "Task 4: Retail discount trap", "description": "Build a model where discounts lift sales now but train customers to wait for future discounts.", "graph": EMPTY_GRAPH, "order_index": 3},
+    ],
+}
+
+
+# ===========================================================================
+# Example #6: Eroding Goals
+# ===========================================================================
+
+ERODING_GOALS_CONTENT = """\
+
+**Learning objective:** You can recognize **Eroding Goals**, model the goal as something that can change, and explain why lowering the target can hide real performance decline.
+
+Eroding Goals happens when people respond to a performance gap by lowering the goal instead of improving the system. The visible gap becomes smaller, so the system feels less pressure to improve. Over time, the weaker goal becomes normal.
+
+### The Basic Pattern
+
+1. **Performance stock**, the real state of the system.
+2. **Goal or standard**, the desired state.
+3. **Gap**, the difference between the goal and performance.
+4. **Correction path**, work that improves performance.
+5. **Goal erosion path**, pressure that lowers the goal when the gap persists.
+
+Meadows calls this trap drift to low performance. The balancing loop that should correct the problem is undermined by a reinforcing loop: lower performance lowers expectations, lower expectations reduce corrective effort, and reduced effort allows still lower performance.
+
+### Examples
+
+A software team may slowly accept lower quality or remove features every time a deadline is missed. A hospital may normalize longer waiting times. A school may accept weaker homework standards because last year's work was already weak. The system can look successful only because the measuring stick has moved.
+
+### How to Escape
+
+Keep standards independent from the current bad state, or let goals be pulled upward by the best historical performance rather than downward by the worst. In model terms, make the goal visible as a node and test what happens when it is fixed, eroded, or raised.
+
+### In the Lab
+
+- **Task 1: Service quality drift**
+  Use the finished service model to trace quality, standard, improvement work, slippage, and goal erosion.
+- **Task 2: Software deadline and scope**
+  Finish the software model by adding the missing scope erosion formula and reconnecting the goal-adjustment path.
+- **Task 3: School homework standards**
+  Build a model where weak homework performance lowers expectations unless a fixed standard is protected.
+- **Task 4: Hospital waiting time target**
+  Build a model where the official waiting-time goal erodes when staffing problems persist.
+"""
+
+ERODING_GOALS_DEMO = compose_graph(
+    nodes=[
+        make_stock_node("eg_quality", "Service quality", 420, 280, quantity=64, unit="index", student_tooltip="Performance stock: the real quality customers experience."),
+        make_stock_node("eg_standard", "Quality standard", 650, 280, quantity=88, unit="index", student_tooltip="Goal stock: this should be protected, but here it can erode."),
+        make_flow_node("eg_improve", "Improvement work", 140, 280, bottleneck=0, expression="max(0, (0) + (eg_effort))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("eg_slip", "Operational slippage", 720, 410, bottleneck=5, unit="index/step"),
+        make_flow_node("eg_erosion_flow", "Goal erosion", 880, 280, bottleneck=0, expression="max(0, (0) + (eg_erosion))", base_flow_expression="0", unit="index/step"),
+        make_variable_node("eg_gap", "Quality gap", 420, 175, expression="(eg_quality < eg_standard ? (eg_standard - eg_quality) : 0)", color=C_AUX),
+        make_variable_node("eg_effort", "Corrective improvement", 140, 175, expression="(max(0, (eg_gap))) / (5)", color=C_AUX),
+        make_variable_node("eg_erosion", "Pressure to lower standard", 880, 175, expression='(max(0, (delay("eg_gap", 5)))) / (8)', color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("eg_e1", "eg_improve", "eg_quality"),
+        make_outflow_edge("eg_e2", "eg_quality", "eg_slip"),
+        make_outflow_edge("eg_e3", "eg_standard", "eg_erosion_flow"),
+        make_feedback_edge("eg_e4", "eg_standard", "eg_gap"),
+        make_feedback_edge("eg_e5", "eg_quality", "eg_gap"),
+        make_feedback_edge("eg_e6", "eg_gap", "eg_effort"),
+        make_feedback_edge("eg_e7", "eg_effort", "eg_improve", op="add"),
+        make_feedback_edge("eg_e8", "eg_gap", "eg_erosion"),
+        make_feedback_edge("eg_e9", "eg_erosion", "eg_erosion_flow", op="add"),
+    ],
+)
+
+ERODING_GOALS_SOFTWARE_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node("egs_todo", "Almost done: delivered quality, accepted standard, improvement work, and slippage are placed. Add the goal erosion formula and reconnect the standard-adjustment path.", 20, 20),
+        make_stock_node("egs_quality", "Delivered software quality", 420, 280, quantity=58, unit="index"),
+        make_stock_node("egs_standard", "Accepted quality bar", 650, 280, quantity=84, unit="index"),
+        make_flow_node("egs_improve", "Refactoring and testing", 140, 280, bottleneck=0, expression="max(0, (0) + (egs_effort))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("egs_slip", "Defects and scope churn", 720, 410, bottleneck=5, unit="index/step"),
+        make_flow_node("egs_erosion_flow", "Scope / quality cuts", 880, 280, bottleneck=0, expression="", base_flow_expression="0", unit="index/step"),
+        make_variable_node("egs_gap", "Delivery gap", 420, 175, expression="(egs_quality < egs_standard ? (egs_standard - egs_quality) : 0)", color=C_AUX),
+        make_variable_node("egs_effort", "Improvement effort", 140, 175, expression="(max(0, (egs_gap))) / (5)", color=C_AUX),
+        make_variable_node("egs_erosion", "Goal erosion (finish)", 880, 175, expression="", color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("egs_e1", "egs_improve", "egs_quality"),
+        make_outflow_edge("egs_e2", "egs_quality", "egs_slip"),
+        make_outflow_edge("egs_e3", "egs_standard", "egs_erosion_flow"),
+        make_feedback_edge("egs_e4", "egs_standard", "egs_gap"),
+        make_feedback_edge("egs_e5", "egs_quality", "egs_gap"),
+        make_feedback_edge("egs_e6", "egs_gap", "egs_effort"),
+        make_feedback_edge("egs_e7", "egs_effort", "egs_improve", op="add"),
+    ],
+)
+
+LESSON_ERODING_GOALS = {
+    "title": "Eroding Goals",
+    "order_index": 5,
+    "content_markdown": ERODING_GOALS_CONTENT,
+    "tasks": [
+        {"title": "Task 1: Service quality drift", "description": "Run the service model. Trace how a persistent quality gap can either trigger improvement or lower the standard itself.", "graph": ERODING_GOALS_DEMO, "order_index": 0},
+        {"title": "Task 2: Software deadline and scope", "description": "Finish the software model. Delivered quality, accepted standard, improvement work, and slippage are placed; add the missing goal erosion path.", "graph": ERODING_GOALS_SOFTWARE_ALMOST, "order_index": 1},
+        {"title": "Task 3: School homework standards", "description": "Build a homework model where weak performance lowers expectations unless a fixed standard is protected.", "graph": EMPTY_GRAPH, "order_index": 2},
+        {"title": "Task 4: Hospital waiting time target", "description": "Build a waiting-time model where the official goal erodes when staffing problems persist.", "graph": EMPTY_GRAPH, "order_index": 3},
+    ],
+}
+
+
+# ===========================================================================
+# Example #7: Success to the Successful
+# ===========================================================================
+
+SUCCESS_SUCCESSFUL_CONTENT = """\
+
+**Learning objective:** You can recognize **Success to the Successful**, model how early advantage attracts more resources, and identify interventions that keep competition from becoming winner-takes-all.
+
+This archetype appears when two actors compete for a limited resource and the actor that is already ahead receives more of that resource. More resources create more success, and more success attracts still more resources. The other actor receives less support and falls further behind.
+
+### The Basic Pattern
+
+1. **Two competing stocks**, such as two projects, firms, teams, or species.
+2. **Limited support pool**, such as teacher attention, investment, nutrients, platform visibility, or customer trust.
+3. **Allocation rule**, more current success wins a larger share of support.
+4. **Reinforcing advantage**, support improves future success.
+5. **Divergence**, a small initial difference becomes a large gap.
+
+Meadows connects this trap to competitive exclusion in ecology, monopoly formation, and rich-get-richer dynamics. The core structure is not that one actor is morally better. It is that the rules reward winners with the means to win again.
+
+### How to Escape
+
+Use diversity, caps, antitrust-like limits, rotating access, or support for weaker competitors. The point is not to punish success; it is to prevent the reward system from destroying the field of competition.
+
+### In the Lab
+
+- **Task 1: Two student projects**
+  Use the finished graph to trace how teacher feedback follows early project quality and widens the difference.
+- **Task 2: Platform recommendation loop**
+  Finish the platform model by adding the missing visibility share formula and information links.
+- **Task 3: Two startups competing for investment**
+  Build a model where early traction attracts funding, and funding creates more traction.
+- **Task 4: Species competing for one niche**
+  Build an ecology model where one species wins more of a limited food resource and excludes the other.
+"""
+
+SUCCESS_SUCCESSFUL_DEMO = compose_graph(
+    nodes=[
+        make_stock_node("s2s_a", "Project A quality", 300, 280, quantity=54, unit="index", student_tooltip="Slightly ahead at the start: this project receives a larger share of feedback."),
+        make_stock_node("s2s_b", "Project B quality", 620, 280, quantity=48, unit="index", student_tooltip="Slightly behind at the start: less feedback makes catching up harder."),
+        make_constant_node("s2s_pool", "Teacher feedback pool", 460, 80, quantity=14, unit="hrs/step", color=C_AUX),
+        make_variable_node("s2s_a_share", "Feedback to A", 260, 170, expression="(s2s_pool) * ((s2s_a) / max(1, (s2s_a) + (s2s_b)))", fb_type="reinforcing", unit="hrs/step", color=C_REINFORCING),
+        make_variable_node("s2s_b_share", "Feedback to B", 660, 170, expression="(s2s_pool) * ((s2s_b) / max(1, (s2s_a) + (s2s_b)))", fb_type="reinforcing", unit="hrs/step", color=C_REINFORCING),
+        make_flow_node("s2s_a_gain", "A improvement from feedback", 100, 280, bottleneck=0, expression="max(0, (0) + (s2s_a_share))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("s2s_b_gain", "B improvement from feedback", 820, 280, bottleneck=0, expression="max(0, (0) + (s2s_b_share))", base_flow_expression="0", unit="index/step"),
+        make_flow_node("s2s_a_decay", "A forgetting / rework", 300, 420, bottleneck=1.4, unit="index/step"),
+        make_flow_node("s2s_b_decay", "B forgetting / rework", 620, 420, bottleneck=1.4, unit="index/step"),
+    ],
+    edges=[
+        make_inflow_edge("s2s_e1", "s2s_a_gain", "s2s_a"),
+        make_inflow_edge("s2s_e2", "s2s_b_gain", "s2s_b"),
+        make_outflow_edge("s2s_e3", "s2s_a", "s2s_a_decay"),
+        make_outflow_edge("s2s_e4", "s2s_b", "s2s_b_decay"),
+        make_feedback_edge("s2s_e5", "s2s_pool", "s2s_a_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e6", "s2s_a", "s2s_a_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e7", "s2s_b", "s2s_a_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e8", "s2s_a_share", "s2s_a_gain", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e9", "s2s_pool", "s2s_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e10", "s2s_b", "s2s_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e11", "s2s_a", "s2s_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2s_e12", "s2s_b_share", "s2s_b_gain", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop("s2s_l_a", "s2s_a", "s2s_a_share", "s2s_a_gain", ["s2s_e6", "s2s_e8"], k=0.1, polarity="positive"),
+        make_reinforcing_loop("s2s_l_b", "s2s_b", "s2s_b_share", "s2s_b_gain", ["s2s_e10", "s2s_e12"], k=0.1, polarity="positive"),
+    ],
+)
+
+SUCCESS_SUCCESSFUL_PLATFORM_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node("s2sp_todo", "Almost done: creators, recommendation pool, and improvement flows are placed. Add the missing visibility share formula and reconnect the information links.", 20, 20),
+        make_stock_node("s2sp_a", "Creator A audience", 300, 280, quantity=58, unit="k users"),
+        make_stock_node("s2sp_b", "Creator B audience", 620, 280, quantity=44, unit="k users"),
+        make_constant_node("s2sp_pool", "Recommendation slots", 460, 80, quantity=16, unit="slots/step"),
+        make_variable_node("s2sp_a_share", "Visibility to A (finish)", 260, 170, expression="", fb_type="reinforcing", color=C_REINFORCING),
+        make_variable_node("s2sp_b_share", "Visibility to B", 660, 170, expression="(s2sp_pool) * ((s2sp_b) / max(1, (s2sp_a) + (s2sp_b)))", fb_type="reinforcing", color=C_REINFORCING),
+        make_flow_node("s2sp_a_gain", "A audience growth", 100, 280, bottleneck=0, expression="max(0, (0) + (s2sp_a_share))", base_flow_expression="0", unit="k/step"),
+        make_flow_node("s2sp_b_gain", "B audience growth", 820, 280, bottleneck=0, expression="max(0, (0) + (s2sp_b_share))", base_flow_expression="0", unit="k/step"),
+    ],
+    edges=[
+        make_inflow_edge("s2sp_e1", "s2sp_a_gain", "s2sp_a"),
+        make_inflow_edge("s2sp_e2", "s2sp_b_gain", "s2sp_b"),
+        make_feedback_edge("s2sp_e5", "s2sp_pool", "s2sp_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2sp_e6", "s2sp_b", "s2sp_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2sp_e7", "s2sp_a", "s2sp_b_share", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("s2sp_e8", "s2sp_b_share", "s2sp_b_gain", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+    ],
+)
+
+LESSON_SUCCESS_TO_SUCCESSFUL = {
+    "title": "Success to the Successful",
+    "order_index": 6,
+    "content_markdown": SUCCESS_SUCCESSFUL_CONTENT,
+    "tasks": [
+        {"title": "Task 1: Two student projects", "description": "Run the project model. Explain how a small initial advantage attracts more feedback and becomes a larger advantage.", "graph": SUCCESS_SUCCESSFUL_DEMO, "order_index": 0},
+        {"title": "Task 2: Platform recommendation loop", "description": "Finish the platform model. Creator audiences and recommendation slots are placed; add the missing visibility share formula and links.", "graph": SUCCESS_SUCCESSFUL_PLATFORM_ALMOST, "order_index": 1},
+        {"title": "Task 3: Startup funding race", "description": "Build a model where early traction attracts funding, and funding creates more traction.", "graph": EMPTY_GRAPH, "order_index": 2},
+        {"title": "Task 4: Species competing for one niche", "description": "Build an ecology model where one species wins more of a limited food resource and excludes the other.", "graph": EMPTY_GRAPH, "order_index": 3},
+    ],
+}
+
+
+# ===========================================================================
+# Example #8: Growth and Underinvestment
+# ===========================================================================
+
+GROWTH_UNDERINVESTMENT_CONTENT = """\
+
+**Learning objective:** You can recognize **Growth and Underinvestment**, explain how weak capacity investment limits a growth loop, and model the delay between demand growth and capacity expansion.
+
+This archetype starts with a reinforcing growth engine. Demand, users, riders, customers, or workload grows. At first that growth is good. But growth creates pressure on a capacity stock. If capacity is not expanded early enough, service quality falls. Lower service quality then slows or reverses growth.
+
+### The Basic Pattern
+
+1. **Demand or activity stock**, the thing that is growing.
+2. **Capacity stock**, the resources needed to serve that demand.
+3. **Service quality**, the ratio between capacity and demand.
+4. **Growth loop**, good service supports more demand.
+5. **Investment loop**, capacity expands only after a perceived gap.
+6. **Delay or low standard**, investment arrives too late or is judged against today's demand instead of future demand.
+
+The trap is not simply "there is a limit." It is that the limit could have been moved if the system had invested before quality collapsed.
+
+### Example
+
+Rail transport is a clear teaching example. Low prices and good service can increase ridership. But if the operator does not invest in trains, tracks, stations, maintenance, and staff, the capacity stock lags behind demand. Crowding and delays reduce service quality, and passengers shift to cars or planes. The growth opportunity disappears because the capacity decision was too slow.
+
+### How to Escape
+
+Set capacity goals from expected future demand, not only current demand. Protect service-quality standards. Shorten investment delays, and invest before growth creates a visible crisis.
+
+### In the Lab
+
+- **Task 1: Rail capacity underinvestment**
+  Use the finished rail model to trace ridership growth, service quality, capacity gap, delayed investment, and lost riders.
+- **Task 2: Clinic appointment capacity**
+  Finish the clinic model by adding the missing investment formula and reconnecting the quality-capacity path.
+- **Task 3: SaaS infrastructure growth**
+  Build a model where user growth strains server capacity and slow infrastructure investment causes churn.
+- **Task 4: University course capacity**
+  Build a model where student demand grows faster than instructors, labs, and classroom seats.
+"""
+
+GROWTH_UNDERINVESTMENT_DEMO = compose_graph(
+    nodes=[
+        make_stock_node("gu_demand", "Rail ridership demand", 420, 280, quantity=35, unit="k riders", student_tooltip="Growth stock: demand rises while service quality is good."),
+        make_stock_node("gu_capacity", "Train and track capacity", 650, 280, quantity=28, unit="k seats", student_tooltip="Capacity stock: investment expands it, but only after a delay."),
+        make_flow_node("gu_growth_flow", "Word-of-mouth growth", 140, 280, bottleneck=0, expression="max(0, (0) + (gu_growth))", base_flow_expression="0", unit="k/step"),
+        make_flow_node("gu_loss_flow", "Lost riders from poor service", 720, 410, bottleneck=0, expression="max(0, (0) + (gu_loss))", base_flow_expression="0", unit="k/step"),
+        make_flow_node("gu_invest_flow", "New trains and track work", 430, 420, bottleneck=0, expression="max(0, (0) + (gu_investment))", base_flow_expression="0", unit="k seats/step"),
+        make_flow_node("gu_wear", "Depreciation and bottlenecks", 880, 280, bottleneck=0.8, unit="k seats/step"),
+        make_constant_node("gu_quality_goal", "Service quality standard", 140, 80, quantity=0.9, unit="ratio", color=C_AUX),
+        make_variable_node("gu_quality", "Service quality = capacity / demand", 420, 175, expression="min(1, (gu_capacity) / max(1, (gu_demand)))", unit="ratio", color=C_AUX),
+        make_variable_node("gu_growth", "Growth supported by quality", 140, 175, expression="(0.08) * (gu_demand) * (gu_quality)", fb_type="reinforcing", unit="k/step", color=C_REINFORCING),
+        make_variable_node("gu_gap", "Capacity gap", 650, 175, expression="(gu_demand > gu_capacity ? (gu_demand - gu_capacity) : 0)", unit="k seats", color=C_AUX),
+        make_variable_node("gu_investment", "Delayed capacity investment", 430, 520, expression='(max(0, (delay("gu_gap", 6)))) / (6)', unit="k seats/step", color=C_AUX),
+        make_variable_node("gu_loss", "Churn from poor service", 720, 520, expression="max(0, (gu_quality_goal) - (gu_quality)) * (gu_demand) * (0.06)", unit="k/step", color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("gu_e1", "gu_growth_flow", "gu_demand"),
+        make_outflow_edge("gu_e2", "gu_demand", "gu_loss_flow"),
+        make_inflow_edge("gu_e3", "gu_invest_flow", "gu_capacity"),
+        make_outflow_edge("gu_e4", "gu_capacity", "gu_wear"),
+        make_feedback_edge("gu_e5", "gu_capacity", "gu_quality"),
+        make_feedback_edge("gu_e6", "gu_demand", "gu_quality"),
+        make_feedback_edge("gu_e7", "gu_quality", "gu_growth", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("gu_e8", "gu_demand", "gu_growth", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("gu_e9", "gu_growth", "gu_growth_flow", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("gu_e10", "gu_demand", "gu_gap"),
+        make_feedback_edge("gu_e11", "gu_capacity", "gu_gap"),
+        make_feedback_edge("gu_e12", "gu_gap", "gu_investment"),
+        make_feedback_edge("gu_e13", "gu_investment", "gu_invest_flow", op="add"),
+        make_feedback_edge("gu_e14", "gu_quality_goal", "gu_loss"),
+        make_feedback_edge("gu_e15", "gu_quality", "gu_loss"),
+        make_feedback_edge("gu_e16", "gu_loss", "gu_loss_flow", op="add"),
+    ],
+    feedback_loops=[
+        make_reinforcing_loop("gu_l_growth", "gu_demand", "gu_growth", "gu_growth_flow", ["gu_e8", "gu_e9"], k=0.08, polarity="positive"),
+    ],
+)
+
+GROWTH_UNDERINVESTMENT_CLINIC_ALMOST = compose_graph(
+    nodes=[
+        make_comment_node("guc_todo", "Almost done: patient demand, clinic capacity, service quality, and lost patients are placed. Add the delayed investment formula and reconnect the capacity-quality path.", 20, 20),
+        make_stock_node("guc_demand", "Patient appointment demand", 420, 280, quantity=42, unit="visits"),
+        make_stock_node("guc_capacity", "Clinician capacity", 650, 280, quantity=30, unit="visits"),
+        make_flow_node("guc_growth_flow", "New patient demand", 140, 280, bottleneck=0, expression="max(0, (0) + (guc_growth))", base_flow_expression="0", unit="visits/step"),
+        make_flow_node("guc_loss_flow", "Patients leaving", 720, 410, bottleneck=0, expression="max(0, (0) + (guc_loss))", base_flow_expression="0", unit="visits/step"),
+        make_flow_node("guc_invest_flow", "Hire and train clinicians", 430, 420, bottleneck=0, expression="", base_flow_expression="0", unit="visits/step"),
+        make_constant_node("guc_quality_goal", "Access standard", 140, 80, quantity=0.9, unit="ratio"),
+        make_variable_node("guc_quality", "Access quality (finish links)", 420, 175, expression="min(1, (guc_capacity) / max(1, (guc_demand)))", color=C_AUX),
+        make_variable_node("guc_growth", "Growth from good access", 140, 175, expression="(0.06) * (guc_demand) * (guc_quality)", fb_type="reinforcing", color=C_REINFORCING),
+        make_variable_node("guc_gap", "Capacity gap", 650, 175, expression="(guc_demand > guc_capacity ? (guc_demand - guc_capacity) : 0)", color=C_AUX),
+        make_variable_node("guc_investment", "Delayed investment (finish)", 430, 520, expression="", color=C_AUX),
+        make_variable_node("guc_loss", "Lost patients from poor access", 720, 520, expression="max(0, (guc_quality_goal) - (guc_quality)) * (guc_demand) * (0.06)", color=C_AUX),
+    ],
+    edges=[
+        make_inflow_edge("guc_e1", "guc_growth_flow", "guc_demand"),
+        make_outflow_edge("guc_e2", "guc_demand", "guc_loss_flow"),
+        make_inflow_edge("guc_e3", "guc_invest_flow", "guc_capacity"),
+        make_feedback_edge("guc_e7", "guc_quality", "guc_growth", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("guc_e8", "guc_demand", "guc_growth", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("guc_e9", "guc_growth", "guc_growth_flow", op="add", fb_type="reinforcing", polarity="positive", persistent=True),
+        make_feedback_edge("guc_e10", "guc_demand", "guc_gap"),
+        make_feedback_edge("guc_e11", "guc_capacity", "guc_gap"),
+        make_feedback_edge("guc_e14", "guc_quality_goal", "guc_loss"),
+        make_feedback_edge("guc_e15", "guc_quality", "guc_loss"),
+        make_feedback_edge("guc_e16", "guc_loss", "guc_loss_flow", op="add"),
+    ],
+)
+
+LESSON_GROWTH_UNDERINVESTMENT = {
+    "title": "Growth and Underinvestment",
+    "order_index": 7,
+    "content_markdown": GROWTH_UNDERINVESTMENT_CONTENT,
+    "tasks": [
+        {"title": "Task 1: Rail capacity underinvestment", "description": "Run the rail model. Identify ridership growth, service quality, capacity gap, delayed investment, and lost riders.", "graph": GROWTH_UNDERINVESTMENT_DEMO, "order_index": 0},
+        {"title": "Task 2: Clinic appointment capacity", "description": "Finish the clinic model. Demand, capacity, service quality, and lost patients are placed; add the delayed investment formula and quality links.", "graph": GROWTH_UNDERINVESTMENT_CLINIC_ALMOST, "order_index": 1},
+        {"title": "Task 3: SaaS infrastructure growth", "description": "Build a SaaS model where user growth strains server capacity and slow infrastructure investment causes churn.", "graph": EMPTY_GRAPH, "order_index": 2},
+        {"title": "Task 4: University course capacity", "description": "Build a university model where student demand grows faster than instructors, labs, and classroom seats.", "graph": EMPTY_GRAPH, "order_index": 3},
     ],
 }
 
@@ -4780,6 +5818,13 @@ CUSTOM_ALMOST_DONE_GRAPHS = {
     "Resilience": RESILIENCE_CITY_ALMOST,
     "Self-Organization": SELF_ORG_MARKET_ALMOST,
     "Boundaries": BOUNDARIES_CITY_ALMOST,
+    "Tragedy of the Commons": TRAGEDY_FISHERY_ALMOST,
+    "Escalation": ESCALATION_PRICE_WAR_ALMOST,
+    "Shifting the Burden": SHIFTING_BURDEN_SLEEP_ALMOST,
+    "Fixes that Fail": FIXES_FAIL_PEST_ALMOST,
+    "Eroding Goals": ERODING_GOALS_SOFTWARE_ALMOST,
+    "Success to the Successful": SUCCESS_SUCCESSFUL_PLATFORM_ALMOST,
+    "Growth and Underinvestment": GROWTH_UNDERINVESTMENT_CLINIC_ALMOST,
 }
 
 
@@ -4964,38 +6009,130 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
             "Build a pollution accumulation model where remaining assimilative capacity or budget limits further growth.",
         ),
     ],
-    "Tragedy of the Commons and Escalation": [
+    "Tragedy of the Commons": [
         (
-            "Commons: Task 1: Overgrazing pasture",
+            "Task 1: Overgrazing pasture",
             "Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.",
         ),
         (
-            "Commons: Task 2: Ocean overfishing",
+            "Task 2: Ocean overfishing",
             "Finish the fishery commons model. Fish biomass, fleet effort, catch pressure, and regrowth are placed; complete the missing private incentive path.",
         ),
         (
-            "Commons: Task 3: City air pollution",
+            "Task 3: City air pollution",
             "Build an urban air commons model with clean air as shared stock, private emissions as drains, and at least one recovery or regulation path.",
         ),
         (
-            "Commons: Task 4: Public road traffic",
+            "Task 4: Public road traffic",
             "Build a road capacity commons model where individual route choices create collective congestion. Add one structural policy lever.",
         ),
+    ],
+    "Escalation": [
         (
-            "Escalation: Task 1: Arms race",
+            "Task 1: Arms race",
             "Use the finished arms race graph to trace the two cross reinforcing buildup paths and predict behavior if neither side changes rules.",
         ),
         (
-            "Escalation: Task 2: Price war",
+            "Task 2: Price war",
             "Finish the price war model. Rival pressure stocks and discount flows are placed; complete the missing cross response path.",
         ),
         (
-            "Escalation: Task 3: Social media outrage",
+            "Task 3: Social media outrage",
             "Build a two community outrage model with mutual reaction signals and at least one intervention that weakens the escalation.",
         ),
         (
-            "Escalation: Task 4: Advertising competition",
+            "Task 4: Advertising competition",
             "Build an advertising arms race model with rival attention or ad spend stocks and cross response flows.",
+        ),
+    ],
+    "Shifting the Burden": [
+        (
+            "Task 1: Cramming vs study habit",
+            "Use the finished student model to trace learning pressure, cramming relief, steady learning, habit building, and the dependency drain.",
+        ),
+        (
+            "Task 2: Sleep aid dependence",
+            "Finish the sleep model. Sleep debt, natural sleep capacity, routine practice, and side effects are placed; add the missing sleep-aid response formula and quick-fix links.",
+        ),
+        (
+            "Task 3: Farm fertilizer dependence",
+            "Build a farm model with soil health as a capacity stock, fertilizer as a quick yield fix, and crop rotation or compost as the slower fundamental solution.",
+        ),
+        (
+            "Task 4: Help desk dependency",
+            "Build a team support model where an expert helper solves tickets quickly but repeated escalation weakens the team's own troubleshooting capacity.",
+        ),
+    ],
+    "Fixes that Fail": [
+        (
+            "Task 1: More roads, more traffic",
+            "Use the finished road model to trace congestion relief, road capacity growth, induced demand, and the delayed return of congestion.",
+        ),
+        (
+            "Task 2: Pesticide rebound",
+            "Finish the pest model. Pest level, pesticide kill, predator control, and side-effect drain are placed; add the missing pesticide response and rebound links.",
+        ),
+        (
+            "Task 3: Overtime in a software project",
+            "Build a project model where overtime reduces backlog now but creates fatigue, rework, and future schedule pressure.",
+        ),
+        (
+            "Task 4: Retail discount trap",
+            "Build a retail model where discounts lift sales now but train customers to wait for future discounts and weaken normal demand.",
+        ),
+    ],
+    "Eroding Goals": [
+        (
+            "Task 1: Service quality drift",
+            "Use the finished service model to trace real quality, the quality standard, improvement work, slippage, and pressure to lower the goal.",
+        ),
+        (
+            "Task 2: Software deadline and scope",
+            "Finish the software model. Delivered quality, accepted standard, improvement work, and slippage are placed; add the missing goal erosion path.",
+        ),
+        (
+            "Task 3: School homework standards",
+            "Build a homework model where weak performance lowers expectations unless a fixed standard or best-past-performance standard is protected.",
+        ),
+        (
+            "Task 4: Hospital waiting time target",
+            "Build a waiting-time model where the official service target erodes when staffing problems persist.",
+        ),
+    ],
+    "Success to the Successful": [
+        (
+            "Task 1: Two student projects",
+            "Use the finished project model to explain how a small initial advantage attracts more feedback and becomes a larger advantage.",
+        ),
+        (
+            "Task 2: Platform recommendation loop",
+            "Finish the platform model. Creator audiences and recommendation slots are placed; add the missing visibility share formula and information links.",
+        ),
+        (
+            "Task 3: Startup funding race",
+            "Build a startup model where early traction attracts funding, and funding creates more traction.",
+        ),
+        (
+            "Task 4: Species competing for one niche",
+            "Build an ecology model where two species compete for one limited food resource and one gradually excludes the other.",
+        ),
+    ],
+    "Growth and Underinvestment": [
+        (
+            "Task 1: Rail capacity underinvestment",
+            "Use the finished rail model to trace ridership growth, service quality, capacity gap, delayed investment, and lost riders.",
+        ),
+        (
+            "Task 2: Clinic appointment capacity",
+            "Finish the clinic model. Demand, capacity, service quality, and lost patients are placed; add the missing delayed investment formula and quality links.",
+        ),
+        (
+            "Task 3: SaaS infrastructure growth",
+            "Build a SaaS model where user growth strains server capacity and slow infrastructure investment causes churn.",
+        ),
+        (
+            "Task 4: University course capacity",
+            "Build a university model where student demand grows faster than instructors, labs, and classroom seats.",
         ),
     ],
 }
@@ -5013,11 +6150,7 @@ def apply_task_copy_overrides(lesson: dict) -> None:
 
 
 def task_groups_for_scaffolding(lesson: dict) -> list[list[dict]]:
-    tasks = lesson["tasks"]
-    if lesson["title"] == "Tragedy of the Commons and Escalation":
-        split_at = next((i for i, task in enumerate(tasks) if str(task["title"]).startswith("Escalation:")), len(tasks))
-        return [tasks[:split_at], tasks[split_at:]]
-    return [tasks]
+    return [lesson["tasks"]]
 
 
 def apply_task_scaffolding(lesson: dict) -> dict:
@@ -5027,19 +6160,13 @@ def apply_task_scaffolding(lesson: dict) -> dict:
 
         first = group[0]
         first["description"] = (
-            "Reference graph: inspect the structure, run the simulation, and use it as an example. "
+            "Use this finished graph. Run it and use it as an example. "
             f"{remove_task_leading_phrases(first['description'])}"
         )
 
         if len(group) >= 2:
             second = group[1]
             custom_graph = CUSTOM_ALMOST_DONE_GRAPHS.get(lesson["title"])
-            if lesson["title"] == "Tragedy of the Commons and Escalation":
-                custom_graph = (
-                    TRAGEDY_FISHERY_ALMOST
-                    if str(group[0]["title"]).startswith("Commons:")
-                    else ESCALATION_PRICE_WAR_ALMOST
-                )
             if custom_graph is not None:
                 second["graph"] = custom_graph
             elif second["graph"] is not EMPTY_GRAPH:
@@ -5051,9 +6178,9 @@ def apply_task_scaffolding(lesson: dict) -> dict:
                     ),
                 )
             second_intro = (
-                "Almost complete: most stock and flow nodes are placed, but a couple of stock and flow connections are missing. "
+                "Almost done: most stock and flow nodes are already placed. Add the missing stock and flow links. "
                 if lesson["title"] == "Stocks and Flows"
-                else "Almost complete: most nodes are placed, but one formula and a couple of connections are missing. "
+                else "Almost done: most nodes are already placed. Add the missing formula and links. "
             )
             second["description"] = (
                 f"{second_intro}{remove_task_leading_phrases(second['description'])}"
@@ -5062,14 +6189,21 @@ def apply_task_scaffolding(lesson: dict) -> dict:
         for task in group[2:]:
             task["graph"] = EMPTY_GRAPH
             task["description"] = (
-                "Blank canvas: build the model from the brief, run it, and explain the result. "
+                "Blank canvas: build the model, run it, and explain what happens. "
                 f"{blank_canvas_task_body(task['description'])}"
             )
 
         for task in group:
+            remove_starter_comment_nodes(task["graph"])
             colorize_graph(task["graph"])
             beautify_graph_layout(task["graph"])
+            simplify_graph_text(task["graph"])
 
+            task["title"] = simplify_student_text(task["title"])
+            task["description"] = simplify_student_text(task["description"])
+
+    lesson["title"] = simplify_student_text(lesson["title"])
+    lesson["content_markdown"] = simplify_student_text(lesson["content_markdown"])
     return lesson
 
 
@@ -5085,6 +6219,12 @@ for _lesson_spec in [
     LESSON_BOUNDARIES,
     LESSON_EXAMPLES_1,
     LESSON_EXAMPLES_2,
+    LESSON_EXAMPLES_3,
+    LESSON_SHIFTING_BURDEN,
+    LESSON_FIXES_THAT_FAIL,
+    LESSON_ERODING_GOALS,
+    LESSON_SUCCESS_TO_SUCCESSFUL,
+    LESSON_GROWTH_UNDERINVESTMENT,
 ]:
     apply_task_copy_overrides(_lesson_spec)
     apply_task_scaffolding(_lesson_spec)
@@ -5132,6 +6272,12 @@ SYSTEMS_THINKING_SECTIONS: list[dict] = [
         "lessons": [
             LESSON_EXAMPLES_1,
             LESSON_EXAMPLES_2,
+            LESSON_EXAMPLES_3,
+            LESSON_SHIFTING_BURDEN,
+            LESSON_FIXES_THAT_FAIL,
+            LESSON_ERODING_GOALS,
+            LESSON_SUCCESS_TO_SUCCESSFUL,
+            LESSON_GROWTH_UNDERINVESTMENT,
         ],
     },
 ]
