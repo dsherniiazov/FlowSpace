@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 def _smtp_outbound_ready(settings: EffectiveEmailSettings) -> bool:
-    """Outbound mail runs when SMTP credentials are complete."""
     return bool(settings.host and settings.username and settings.password)
 
 
@@ -32,6 +31,7 @@ def send_password_reset_email(
             bool(email_settings.password),
             to_email,
         )
+        logger.info("Password reset link for %s: %s", to_email, reset_link)
         return
 
     msg = MIMEMultipart("alternative")

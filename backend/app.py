@@ -24,7 +24,6 @@ app.add_exception_handler(DomainError, domain_error_handler)
 
 @app.on_event("startup")
 def run_startup_seed() -> None:
-    """Idempotent: Intro + systems-thinking sections/lessons/tasks (see backend/seed.py)."""
     run_seed()
 
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key)

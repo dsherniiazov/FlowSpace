@@ -17,7 +17,7 @@ import { fetchUserById } from "../../features/users/api";
 import { MarkReviewedModal } from "../../components/MarkReviewedModal";
 import { LabHelpModal } from "../../components/LabHelpModal";
 import { useAuthStore } from "../../store/authStore";
-import { isValidLabConnection, useLabStore } from "../../store/labStore";
+import { isFeedbackLoopActionNode, isValidLabConnection, useLabStore } from "../../store/labStore";
 import { getLabColorTokens, useUiPreferencesStore } from "../../store/uiPreferencesStore";
 import { useTutorialStore } from "../../store/tutorialStore";
 
@@ -118,12 +118,19 @@ export function LabPage(): JSX.Element {
     if (!selectedEdge) return false;
     const sourceNode = nodes.find((node) => node.id === selectedEdge.source);
     const targetNode = nodes.find((node) => node.id === selectedEdge.target);
-    return (
-      (isConstantNode(sourceNode) || isVariableNode(sourceNode)) &&
+    const isFromControl = isConstantNode(sourceNode) || isVariableNode(sourceNode);
+    if (!isFromControl || !targetNode) return false;
+    if (
       (isFlowNode(targetNode) || isVariableNode(targetNode)) &&
       selectedEdge.data?.feedbackLoop !== true
-    );
-  }, [nodes, selectedEdge]);
+    ) {
+      return true;
+    }
+    if (isVariableNode(targetNode) && isFeedbackLoopActionNode(targetNode.id, feedbackLoops)) {
+      return true;
+    }
+    return false;
+  }, [nodes, selectedEdge, feedbackLoops]);
 
   const selectedEdgeOp = useMemo(() => {
     if (!selectedEdgeIsControl || !selectedEdge) return "add";
@@ -175,6 +182,7 @@ export function LabPage(): JSX.Element {
     saveDisabledNoChanges,
     saveButtonDisabled,
     isSaveError,
+    isSavePending,
     isSubmitForReviewPending,
     isSubmitForReviewSuccess,
     isMarkReviewedPending,

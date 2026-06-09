@@ -1,360 +1,173 @@
 # FlowSpace
 
-FlowSpace is a full-stack educational simulation platform.
+A web application for teaching systems thinking.
 
-- Backend: FastAPI + SQLAlchemy + Alembic + PostgreSQL
-- Frontend: React + TypeScript + Vite
+**Installation options:**
 
-For expanded step-by-step instructions (including hosting context), see:
+- [Docker Compose (Recommended)](#docker-compose-installation)
+- [Local Installation](#local-installation)
 
-- <https://davinci.fmph.uniba.sk/~sherniiazov1/docs/index.html>
-
-## Contents
-
-1. Overview
-2. Tech Stack
-3. Project Structure
-4. Prerequisites
-5. Docker Deployment on Localhost
-6. Docker Deployment on a Server and Domain
-7. Local Deployment Without Docker
-8. Environment Variables
-9. Database Migrations
-10. Testing
-11. Troubleshooting
-12. Security and Deployment Best Practices
-
-## Overview
-
-Main features:
-
-- JWT authentication with email/password
-- Optional OAuth login (Google and GitHub)
-- Lessons, tasks, systems, progress, simulation runs
-- Auto-seeding of initial learning content
-- Docker-first workflow
-
-## Tech Stack
-
-Backend:
-
-- Python 3.13
-- FastAPI
-- SQLAlchemy 2.x
-- Alembic
-- PostgreSQL 17
-
-Frontend:
-
-- Node.js 22
-- React 18
-- TypeScript
-- Vite 5
-
-## Project Structure
-
-~~~text
-flowspace_dev/
-├─ backend/
-│  ├─ alembic/
-│  ├─ alembic.ini
-│  ├─ run.py
-│  └─ Dockerfile
-├─ frontend/
-├─ test/
-│  ├─ backend/
-│  └─ frontend/
-├─ docker-compose.yml
-├─ requirements.txt
-├─ .env.example
-└─ .env
-~~~
+---
 
 ## Prerequisites
 
-For Docker deployment:
+Before installing FlowSpace, ensure that the following software is installed on your system:
 
-- Docker Engine 24+
-- Docker Compose v2
+- **Docker and Docker Compose** (for Docker-based installation)
+- **Python 3.13+** and **Node.js 22+** (for local development)
+- **PostgreSQL 17** (required for local installation; provided automatically in Docker)
+- Git
 
-For local non-Docker deployment:
-
-- Python 3.13
-- Node.js 22
-- PostgreSQL 17
-
-## Docker Deployment on Localhost
-
-This is the recommended path for development and quick validation.
-
-1. Clone repository.
-
-~~~bash
-git clone <repo-url>
-cd flowspace_dev
-~~~
-
-1. Create environment file.
-
-~~~bash
-cp .env.example .env
-~~~
-
-1. Ensure Docker-safe bind host in .env.
-
-- BACKEND_HOST must be 0.0.0.0 in Docker
-- DB_URL host must be db (service name), not localhost
-
-1. Build and start all services.
-
-~~~bash
-docker compose up -d --build
-~~~
-
-1. Verify services.
-
-~~~bash
-docker compose ps
-~~~
-
-1. Open application.
-
-- Frontend: <http://localhost:5173>
-- API docs: <http://localhost:8000/docs>
-
-1. Stop stack when needed.
-
-~~~bash
-docker compose down
-~~~
-
-## Docker Deployment on a Server and Domain
-
-This section describes a production-style deployment using Docker Compose.
-
-### A. Server Preparation
-
-1. Prepare Linux server (Ubuntu/Debian recommended).
-2. Install Docker and Compose plugin.
-3. Open firewall ports:
-
-- 22 (SSH)
-- 80 (HTTP)
-- 443 (HTTPS)
-
-Only expose 5173 and 8000 directly if you explicitly need them.
-
-### B. DNS Setup
-
-Create DNS records pointing to server IP.
-
-Typical options:
-
-- app.example.com -> frontend
-- api.example.com -> backend
-
-Or use one domain and route by reverse proxy paths.
-
-### C. Application Configuration
-
-Use .env in project root.
-
-Important values for Docker on server:
-
-- BACKEND_HOST=0.0.0.0
-- BACKEND_PORT=8000
-- RUN_MIGRATIONS=true for first deploy
-- DB_URL=postgresql+psycopg://admin:admin@db:5432/flowspace
-- CORS_ORIGINS must include your real frontend domain(s)
-
-Example:
-
-~~~dotenv
-CORS_ORIGINS=https://app.example.com,https://www.app.example.com
-~~~
-
-### D. Start Services
-
-~~~bash
-docker compose up -d --build
-~~~
-
-### E. Reverse Proxy and TLS
-
-Recommended: place Nginx or Caddy in front of containers.
-
-Example Nginx virtual host approach:
-
-- app.example.com -> proxy to frontend:5173
-- api.example.com -> proxy to api:8000
-
-Then issue TLS certificates (for example, Certbot for Nginx).
-
-If you prefer one domain, route by path:
-
-- / -> frontend
-- /api -> backend
-
-In that case, make sure frontend API base URL aligns with proxy routing.
-
-### F. Post-Deploy Validation
-
-Check:
-
-- <https://api.example.com/docs> opens
-- Frontend can login/register
-- No CORS errors in browser console
-- docker compose logs api has no startup exceptions
-
-## Local Deployment Without Docker
-
-Use this mode when you need direct backend/frontend debugging.
-
-### 1. Backend
-
-~~~bash
-cp .env.example .env
-python3.13 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-alembic -c backend/alembic.ini upgrade head
-python -m backend.run
-~~~
-
-Backend runs on <http://localhost:8000>
-
-### 2. Frontend
-
-~~~bash
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
-~~~
-
-Frontend runs on <http://localhost:5173>
+---
 
 ## Environment Variables
 
-Use .env.example as source of truth.
+FlowSpace requires several environment variables to be configured before running. These variables control database connectivity, security, and application behaviour.
 
-Core required:
+The following variables are particularly important:
 
-- DB_URL
-- SECRET_KEY
+| Variable              | Required | Description                                                                 | Recommended Value (Docker)                  | Recommended Value (Local)                     | Notes |
+|-----------------------|----------|-----------------------------------------------------------------------------|---------------------------------------------|-----------------------------------------------|-------|
+| `DB_URL`              | Yes      | Full PostgreSQL connection string using the `psycopg` dialect.              | `postgresql+psycopg://admin:admin@db:5432/flowspace` | `postgresql+psycopg://admin:admin@localhost:5432/flowspace` | The most critical variable. In Docker Compose, the hostname must be `db` (the service name). Using `localhost` inside containers will cause connection failures. |
+| `SECRET_KEY`          | Yes      | Cryptographic secret used to sign and verify JWT authentication tokens.     | A long, random, secure string (minimum 32 characters) | Same as Docker                              | Must be unique and kept confidential. Weak or default values pose a serious security risk. |
+| `RUN_MIGRATIONS`      | No       | When set to `true`, the application automatically applies pending Alembic database migrations on startup. | `true` (first run)                          | `true` (first run)                            | Recommended for development and initial deployment. In production, it is preferable to run migrations explicitly rather than automatically. |
+| `CORS_ORIGINS`        | No       | Comma-separated list of allowed origins for Cross-Origin Resource Sharing.  | `http://localhost:5173,http://127.0.0.1:5173` | Same as Docker                                | Must include the exact URL where the frontend is served. Missing origins will result in CORS errors in the browser. |
+| `BACKEND_HOST`        | No       | Network interface to which the backend server binds.                        | `0.0.0.0`                                   | `127.0.0.1` or `0.0.0.0`                      | Must be `0.0.0.0` when running inside Docker or when the application needs to be accessible from outside the host machine. |
+| `BACKEND_PORT`        | No       | Port on which the backend API listens.                                      | `8000`                                      | `8000`                                        | Must match the port exposed in Docker Compose and any reverse proxy configuration. |
+| `RELOAD`              | No       | Enables automatic server restart when Python files are changed (hot reload). | `false`                                     | `false` (or `true` during active development) | Useful only for local development. Increases resource usage and is not recommended inside Docker containers. |
 
-Runtime:
+### Optional Environment Variables
 
-- RUN_MIGRATIONS
-- BACKEND_HOST
-- BACKEND_PORT
-- CORS_ORIGINS
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Required to enable Google OAuth login buttons. If left empty, Google authentication will be disabled.
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — Required to enable GitHub OAuth login buttons.
+- `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — Required to enable password reset emails and other transactional emails. If not configured, email-based features will be unavailable.
+- `FILES_HOST_DIR` — Host directory mounted into the container for persistent file storage (avatars, exports, etc.). Used only in Docker Compose.
 
-Storage:
+---
 
-- FILES_DIR
-- FILES_HOST_DIR (used by docker-compose bind mount)
+## Docker Compose Installation
 
-Optional OAuth:
+This is the recommended method for most users.
 
-- GOOGLE_CLIENT_ID
-- GOOGLE_CLIENT_SECRET
-- GITHUB_CLIENT_ID
-- GITHUB_CLIENT_SECRET
+### Steps
 
-Note about OAuth buttons:
+1. Extract the provided archive and navigate into the project root directory (e.g. `cd flowspace`).
 
-- Login/register pages show Google or GitHub buttons only when matching provider credentials are configured on backend.
+2. Copy the example environment file:
 
-## Database Migrations
+   ```bash
+   cp .env.example .env
+   ```
 
-Apply latest:
+3. Edit the `.env` file and configure at minimum the following variables:
 
-~~~bash
-alembic -c backend/alembic.ini upgrade head
-~~~
+   ```env
+   SECRET_KEY=your-long-random-secret-key-here
+   DB_URL=postgresql+psycopg://admin:admin@db:5432/flowspace
+   RUN_MIGRATIONS=true
+   RELOAD=false
+   ```
 
-Create new migration:
+4. Build and start all services:
 
-~~~bash
-alembic -c backend/alembic.ini revision --autogenerate -m "describe_change"
-~~~
+   ```bash
+   docker compose up -d --build
+   ```
 
-Rollback one revision:
+5. Wait for the containers to initialise (typically 30–60 seconds on first run). The application will automatically apply migrations and seed initial learning content.
 
-~~~bash
-alembic -c backend/alembic.ini downgrade -1
-~~~
+6. Access the application:
 
-## Testing
+   - Frontend: [http://localhost:5173](http://localhost:5173)
+   - API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-Backend tests:
+---
 
-~~~bash
-pytest -q test/backend
-~~~
+## Local Installation
 
-Docker smoke check:
+This method is suitable for active development of the backend or frontend.
 
-~~~bash
-docker compose up -d --build
-docker compose logs --tail=100 api
-~~~
+Extract the provided archive and open the project root directory in your terminal (e.g. `cd flowspace`).
+
+### Backend
+
+1. Create and activate a Python virtual environment:
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Configure the `.env` file for local use (example):
+
+   ```env
+   DB_URL=postgresql+psycopg://admin:admin@localhost:5432/flowspace
+   SECRET_KEY=dev-secret-key-change-in-production
+   RUN_MIGRATIONS=true
+   ```
+
+4. Start the backend:
+
+   ```bash
+   python -m backend.run
+   ```
+
+### Frontend
+
+Open a new terminal and run:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will be available at [http://localhost:5173](http://localhost:5173).
+
+---
+
+## Post-Installation Notes
+
+- On first startup, the application automatically seeds introductory lessons and systems-thinking content.
+- If `RUN_MIGRATIONS=true` was not set in the `.env` file, database migrations can be applied manually using:
+
+  ```bash
+  alembic -c backend/alembic.ini upgrade head
+  ```
+
+- To generate a new migration after model changes:
+
+  ```bash
+  alembic -c backend/alembic.ini revision --autogenerate -m "description of changes"
+  ```
+
+---
 
 ## Troubleshooting
 
-### Error: Cannot assign requested address
+**Connection refused to the database**
 
-Symptom:
+- Verify that `DB_URL` uses the correct hostname (`db` inside Docker Compose, `localhost` for local installation).
+- Ensure PostgreSQL is running when using local installation.
 
-- backend log contains Errno 99
+**CORS errors in the browser console**
 
-Cause:
+- Add the frontend URL to the `CORS_ORIGINS` variable and restart the backend.
 
-- BACKEND_HOST set to external host IP inside Docker container
+**Authentication not working**
 
-Fix:
+- Ensure `SECRET_KEY` is set to a strong, unique value.
 
-- set BACKEND_HOST=0.0.0.0
+**OAuth buttons are missing**
 
-### CORS errors in browser
+- OAuth provider credentials (`GOOGLE_*` or `GITHUB_*`) must be configured in `.env`.
 
-Cause:
+**Changes not visible after code modifications (Docker)**
 
-- frontend origin missing in CORS_ORIGINS
-
-Fix:
-
-- add exact frontend URL(s) to CORS_ORIGINS and restart api
-
-### OAuth provider not configured
-
-Cause:
-
-- provider keys are empty or commented out
-
-Fix:
-
-- set provider credentials in .env and restart api
-
-### DB schema errors on startup
-
-Cause:
-
-- migrations not applied
-
-Fix:
-
-- set RUN_MIGRATIONS=true in Docker, or run alembic upgrade head manually
-
-## Security and Deployment Best Practices
-
-- Keep .env out of git and use strong SECRET_KEY in production.
-- Use HTTPS on public deployments.
-- Restrict CORS_ORIGINS to real domains only.
-- Prefer reverse proxy (Nginx/Caddy) over exposing internal service ports directly.
-- Keep RUN_MIGRATIONS=true for bootstrap, then move to explicit migration step in CI/CD for controlled production rollouts.
-
-## More Detailed Documentation
-
-- <https://davinci.fmph.uniba.sk/~sherniiazov1/docs/index.html>
+- Rebuild the images using `docker compose up -d --build`.

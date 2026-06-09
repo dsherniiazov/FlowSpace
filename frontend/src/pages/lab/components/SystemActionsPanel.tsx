@@ -69,13 +69,12 @@ export function SystemActionsPanel({
       >
         Create new system
       </button>
-      {activeSystemId && !isAdmin ? (
+      {!isReviewingAsTeacher ? (
         <button
           className={`lab-btn lab-btn-secondary w-full ${isSubmitForReviewSuccess ? "lab-btn-save-idle" : ""}`}
           type="button"
           onClick={onSubmitForReview}
           disabled={isSubmitForReviewPending || isSubmitForReviewSuccess}
-          title="Submit this system to a teacher for review"
         >
           {isSubmitForReviewPending ? "Submitting..." : isSubmitForReviewSuccess ? "Submitted for review \u2713" : "Submit for review"}
         </button>

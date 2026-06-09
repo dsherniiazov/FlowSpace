@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     frontend_url: str = "http://localhost:5173"
     public_api_url: str = ""
+    reload: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

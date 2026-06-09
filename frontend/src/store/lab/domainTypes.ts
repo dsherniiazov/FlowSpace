@@ -20,6 +20,8 @@ export type BalancingFeedbackLoop = {
   clampNonNegative: boolean;
   baseFlowExpression: string;
   edgeIds: string[];
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type ReinforcingFeedbackLoop = {
@@ -37,6 +39,8 @@ export type ReinforcingFeedbackLoop = {
   clampNonNegative: boolean;
   baseFlowExpression: string;
   edgeIds: string[];
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type FeedbackLoop = BalancingFeedbackLoop | ReinforcingFeedbackLoop;
@@ -58,6 +62,8 @@ export type CreateBalancingFeedbackLoopPayload = {
     discrepancy: { x: number; y: number };
     corrective: { x: number; y: number };
   };
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type CreateReinforcingFeedbackLoopPayload = {
@@ -76,6 +82,8 @@ export type CreateReinforcingFeedbackLoopPayload = {
     growthLimit?: { x: number; y: number };
     marker: { x: number; y: number };
   };
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type UpdateBalancingFeedbackLoopPayload = {
@@ -90,6 +98,8 @@ export type UpdateBalancingFeedbackLoopPayload = {
   name?: string;
   correctiveLabel?: string;
   correctivePosition?: { x: number; y: number };
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type FeedbackLoopResult =

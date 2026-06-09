@@ -175,3 +175,11 @@ export function asFiniteNumber(value: unknown, fallback = 0): number {
 export function clampFlowNonNegative(value: unknown): number {
   return Math.max(0, asFiniteNumber(value, 0));
 }
+
+export function isFeedbackLoopActionNode(nodeId: string, loops: readonly FeedbackLoop[]): boolean {
+  for (const loop of loops) {
+    if (loop.type === "balancing" && nodeId === loop.correctiveNodeId) return true;
+    if (loop.type === "reinforcing" && nodeId === loop.multiplierNodeId) return true;
+  }
+  return false;
+}

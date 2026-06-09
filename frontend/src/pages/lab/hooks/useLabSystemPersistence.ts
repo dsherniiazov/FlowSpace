@@ -175,7 +175,13 @@ export function useLabSystemPersistence({
   }
 
   function handleSubmitForReview(): void {
-    if (!activeSystemId || submitForReviewMutation.isPending) return;
+    if (submitForReviewMutation.isPending || saveMutation.isPending) return;
+    if (!activeSystemId || hasUnsavedChanges) {
+      setSaveAttempted(true);
+      if (saveBlockedReason) return;
+      saveMutation.mutateAsync().then((saved) => { submitForReviewMutation.mutate(saved.id); }).catch(() => {});
+      return;
+    }
     submitForReviewMutation.mutate(activeSystemId);
   }
 
@@ -194,6 +200,7 @@ export function useLabSystemPersistence({
     saveDisabledNoChanges,
     saveButtonDisabled: saveMutation.isPending || saveDisabledNoChanges,
     isSaveError: saveMutation.isError,
+    isSavePending: saveMutation.isPending,
     isSubmitForReviewPending: submitForReviewMutation.isPending,
     isSubmitForReviewSuccess: submitForReviewMutation.isSuccess,
     isMarkReviewedPending: markReviewedMutation.isPending,

@@ -6,7 +6,8 @@ import {
   ReinforcingPolarity,
 } from "../store/labStore";
 import { matchesShortcutEvent, useShortcutStore } from "../store/shortcutStore";
-import type { ConnectedFlowOption } from "../pages/lab/types";
+import type { ConnectedFlowOption, RoundingDirection } from "../pages/lab/types";
+import { ROUNDING_DIRECTIONS } from "../pages/lab/types";
 
 export type BalancingSubmitPayload = {
   boundaryType: BoundaryType;
@@ -18,6 +19,8 @@ export type BalancingSubmitPayload = {
   delaySteps: number;
   name?: string;
   correctiveLabel?: string;
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 export type ReinforcingSubmitPayload = {
@@ -30,6 +33,8 @@ export type ReinforcingSubmitPayload = {
   clampNonNegative: boolean;
   name?: string;
   multiplierLabel?: string;
+  roundingEnabled?: boolean;
+  roundingDirection?: "up" | "down";
 };
 
 type FeedbackLoopModalProps = {
@@ -87,6 +92,8 @@ export function FeedbackLoopModal({
   const [clampNonNegative, setClampNonNegative] = useState(true);
   const [multiplierLabel, setMultiplierLabel] = useState("Multiplier");
   const [loopName, setLoopName] = useState("");
+  const [roundingEnabled, setRoundingEnabled] = useState(false);
+  const [roundingDirection, setRoundingDirection] = useState<RoundingDirection>("down");
   const [error, setError] = useState<string | null>(null);
 
   const hasConnectedFlow = connectedFlows.length > 0;
@@ -115,6 +122,8 @@ export function FeedbackLoopModal({
     setLoopName(
       initialBalancingValues?.name ?? initialReinforcingValues?.name ?? "",
     );
+    setRoundingEnabled((initialBalancingValues?.roundingEnabled ?? initialReinforcingValues?.roundingEnabled) === true);
+    setRoundingDirection((initialBalancingValues?.roundingDirection ?? initialReinforcingValues?.roundingDirection ?? "down"));
     setError(null);
   }, [isOpen, connectedFlows, initialTab, initialBalancingValues, initialReinforcingValues]);
 
@@ -189,6 +198,8 @@ export function FeedbackLoopModal({
         delaySteps: delayEnabled ? delaySteps : 0,
         name: loopName.trim() || undefined,
         correctiveLabel: correctiveLabel.trim() || undefined,
+        roundingEnabled,
+        roundingDirection,
       });
     } else {
       const k = parseNumericInput(kInput);
@@ -220,6 +231,8 @@ export function FeedbackLoopModal({
         clampNonNegative,
         name: loopName.trim() || undefined,
         multiplierLabel: multiplierLabel.trim() || undefined,
+        roundingEnabled,
+        roundingDirection,
       });
     }
 
@@ -377,6 +390,34 @@ export function FeedbackLoopModal({
               <span>Flow is always clamped at &gt;= 0</span>
             </div>
 
+            <div className="space-y-1 pt-1">
+              <label className="flex items-center gap-2 text-sm lab-field">
+                <input
+                  type="checkbox"
+                  checked={roundingEnabled}
+                  disabled={mode === "edit" && activeTab !== "balancing"}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setRoundingEnabled(next);
+                    if (next && roundingDirection !== "up" && roundingDirection !== "down") setRoundingDirection("down");
+                  }}
+                />
+                <span>Round to integer</span>
+              </label>
+              {roundingEnabled ? (
+                <select
+                  className="lab-input mt-1 text-sm"
+                  value={roundingDirection}
+                  disabled={mode === "edit" && activeTab !== "balancing"}
+                  onChange={(e) => setRoundingDirection(e.target.value as RoundingDirection)}
+                >
+                  {ROUNDING_DIRECTIONS.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+
             {error ? <div className="lab-error text-xs">{error}</div> : null}
 
             <div className="lab-loop-actions">
@@ -479,6 +520,34 @@ export function FeedbackLoopModal({
                 />
                 <span>Clamp flow to &gt;= 0</span>
               </label>
+            </div>
+
+            <div className="space-y-1 pt-1">
+              <label className="flex items-center gap-2 text-sm lab-field">
+                <input
+                  type="checkbox"
+                  checked={roundingEnabled}
+                  disabled={mode === "edit" && activeTab !== "reinforcing"}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setRoundingEnabled(next);
+                    if (next && roundingDirection !== "up" && roundingDirection !== "down") setRoundingDirection("down");
+                  }}
+                />
+                <span>Round to integer</span>
+              </label>
+              {roundingEnabled ? (
+                <select
+                  className="lab-input mt-1 text-sm"
+                  value={roundingDirection}
+                  disabled={mode === "edit" && activeTab !== "reinforcing"}
+                  onChange={(e) => setRoundingDirection(e.target.value as RoundingDirection)}
+                >
+                  {ROUNDING_DIRECTIONS.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+              ) : null}
             </div>
 
             {error ? <div className="lab-error text-xs">{error}</div> : null}

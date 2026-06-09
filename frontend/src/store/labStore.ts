@@ -65,7 +65,7 @@ export type {
   UpdateBalancingFeedbackLoopPayload,
 } from "./lab/domainTypes";
 export type { ControlOp } from "./lab/graph";
-export { CONTROL_OPS, feedbackLoopEdgeOverlay, isValidLabConnection } from "./lab/graph";
+export { CONTROL_OPS, feedbackLoopEdgeOverlay, isFeedbackLoopActionNode, isValidLabConnection } from "./lab/graph";
 
 export type CreateBalancingFeedbackLoopResult = FeedbackLoopResult;
 
@@ -522,6 +522,8 @@ export const useLabStore = create<LabState>((set, get) => ({
       delaySteps,
       controlledFlowId: payload.controlledFlowId,
       baseFlowExpression: nextBaseFlowExpression,
+      roundingEnabled: payload.roundingEnabled ?? loop.roundingEnabled ?? false,
+      roundingDirection: payload.roundingDirection ?? loop.roundingDirection ?? "down",
     };
     const nextFlowExpression = rebuildFlowExpression(nextBaseFlowExpression, [
       ...currentLoops.filter(

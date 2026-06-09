@@ -2,7 +2,7 @@ import type { Node } from "reactflow";
 
 import type { ControlOp } from "../../../store/labStore";
 import { getLabColorTokens, resolveStockColor, type ColorblindMode } from "../../../store/uiPreferencesStore";
-import { CONTROL_OPS } from "../types";
+import { CONTROL_OPS, ROUNDING_DIRECTIONS, type RoundingDirection } from "../types";
 import { isFlowNode } from "../utils";
 
 type NodePropertiesPanelProps = {
@@ -166,6 +166,35 @@ export function NodePropertiesPanel({
           </div>
         </div>
       ) : null}
+
+      <div className="space-y-1 pt-1">
+        <label className="flex items-center gap-2 text-xs lab-field">
+          <input
+            type="checkbox"
+            disabled={lockEditing}
+            checked={!!selectedNode.data?.roundingEnabled}
+            onChange={(e) => {
+              const next = e.target.checked;
+              const patch: Record<string, unknown> = { roundingEnabled: next };
+              if (next && !selectedNode.data?.roundingDirection) patch.roundingDirection = "down";
+              onUpdateNode(patch);
+            }}
+          />
+          <span>Round to integer</span>
+        </label>
+        {!!selectedNode.data?.roundingEnabled ? (
+          <select
+            className="lab-input mt-1 text-xs"
+            disabled={lockEditing}
+            value={(selectedNode.data?.roundingDirection as RoundingDirection) ?? "down"}
+            onChange={(e) => onUpdateNode({ roundingDirection: e.target.value })}
+          >
+            {ROUNDING_DIRECTIONS.map((d) => (
+              <option key={d.value} value={d.value}>{d.label}</option>
+            ))}
+          </select>
+        ) : null}
+      </div>
     </div>
   );
 }

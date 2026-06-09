@@ -247,6 +247,8 @@ export function buildBalancingLoopElements(
       edgeDiscrepancyToCorrective.id,
       edgeCorrectiveToFlow.id,
     ],
+    roundingEnabled: payload.roundingEnabled ?? false,
+    roundingDirection: payload.roundingDirection ?? "down",
   };
 
   return {
@@ -426,6 +428,8 @@ export function buildReinforcingLoopElements(
       ...(edgeGrowthLimitToMultiplier ? [edgeGrowthLimitToMultiplier.id] : []),
       edgeMultiplierToFlow.id,
     ],
+    roundingEnabled: payload.roundingEnabled ?? false,
+    roundingDirection: payload.roundingDirection ?? "down",
   };
 
   return {

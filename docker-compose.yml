@@ -13,11 +13,17 @@ services:
       - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   api:
     build:
       context: ./backend
-      dockerfile: backend/Dockerfile
+      dockerfile: Dockerfile
     container_name: flowspace_api
     restart: always
     command: python -m backend.run
@@ -26,7 +32,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - .:/app
       - ${FILES_HOST_DIR:-flowspace_files_data}:${FILES_DIR:-/data/files}
@@ -45,25 +52,6 @@ services:
       - "5173:5173"
     depends_on:
       - api
-
-  # test_all:
-  #   # Uncomment this service to run the full test suite manually:
-  #   # docker compose run --rm test_all
-  #   build:
-  #     context: .
-  #     dockerfile: backend/Dockerfile
-  #   container_name: flowspace_test_all
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     - db
-  #   volumes:
-  #     - .:/app
-  #   command: >
-  #     sh -c "
-  #       pytest -q test/backend
-  #       # && cd frontend && npm ci && npm run test
-  #     "
 
 volumes:
   postgres_data:

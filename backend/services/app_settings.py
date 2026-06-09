@@ -9,7 +9,6 @@ from backend.utils.db import commit
 
 
 def _bool_from_optional_setting(raw: str | None, default: bool) -> bool:
-    """Treat missing or blank DB values as "use default" (not falsy)."""
     if raw is None:
         return default
     stripped = raw.strip()
@@ -79,7 +78,6 @@ class AppSettingsService:
             close_db = True
         try:
             values = AppSettingsService.get_values(db, AppSettingsService.EMAIL_KEYS)
-            # Empty strings in DB must not wipe .env defaults (keys exist with "").
             host = (values.get("smtp_host") or "").strip() or settings.smtp_host
             username = (values.get("smtp_user") or "").strip() or settings.smtp_user
             password = (values.get("smtp_password") or "").strip() or settings.smtp_password
@@ -104,7 +102,6 @@ class AppSettingsService:
 
     @staticmethod
     def get_effective_frontend_base_url(db: Session | None = None) -> str:
-        """Origin for links in emails (password reset); falls back to FRONTEND_URL env."""
         close_db = False
         if db is None:
             db = SessionLocal()

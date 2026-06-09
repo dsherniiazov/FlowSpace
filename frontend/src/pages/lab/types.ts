@@ -33,3 +33,10 @@ export const CONTROL_OPS: Array<{ value: ControlOp; label: string }> = [
   { value: "pow", label: "^" },
   { value: "mod", label: "%" },
 ];
+
+export type RoundingDirection = "up" | "down";
+
+export const ROUNDING_DIRECTIONS: Array<{ value: RoundingDirection; label: string }> = [
+  { value: "down", label: "Down (floor)" },
+  { value: "up", label: "Up (ceil)" },
+];

@@ -191,6 +191,8 @@ export function useFeedbackLoopEditor({
         name: payload.name,
         correctiveLabel: payload.correctiveLabel,
         correctivePosition: proposeCorrectivePosition(controlledFlow),
+        roundingEnabled: payload.roundingEnabled,
+        roundingDirection: payload.roundingDirection,
       });
       if (result.ok) setEditingFeedbackLoopId(null);
       return result;
@@ -209,6 +211,8 @@ export function useFeedbackLoopEditor({
       name: payload.name,
       correctiveLabel: payload.correctiveLabel,
       positions: proposeBalancingLoopPositions(activeFeedbackLoopStockNode, controlledFlow, nodes),
+      roundingEnabled: payload.roundingEnabled,
+      roundingDirection: payload.roundingDirection,
     });
 
     if (result.ok) setCreateFeedbackLoopStockId(null);
@@ -247,6 +251,8 @@ export function useFeedbackLoopEditor({
         nodes,
         payload.growthLimit !== undefined,
       ),
+      roundingEnabled: payload.roundingEnabled,
+      roundingDirection: payload.roundingDirection,
     });
 
     if (result.ok) resetFeedbackLoopEditor();

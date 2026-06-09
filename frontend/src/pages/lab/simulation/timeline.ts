@@ -70,7 +70,67 @@ type FlowEvaluation = {
   flowEffectiveRate: Record<string, number>;
   loopDiscrepancyById: Map<string, number>;
   loopCorrectiveById: Map<string, number>;
+  loopEffectiveMultiplierById: Map<string, number>;
 };
+
+function collectLoopOutputModifiers(
+  actionNodeId: string,
+  edges: Edge[],
+  nodesById: Map<string, Node>,
+  internalSourceIds: Set<string>,
+): Array<{ sourceNode: Node; op: ControlOp }> {
+  const mods: Array<{ sourceNode: Node; op: ControlOp }> = [];
+  for (const edge of edges) {
+    if (edge.target !== actionNodeId) continue;
+    const src = nodesById.get(edge.source);
+    if (!src || !(isConstantNode(src) || isVariableNode(src))) continue;
+    if (internalSourceIds.has(edge.source)) continue;
+    const rawOp = String(edge.data?.op ?? "add");
+    const op: ControlOp = (rawOp === "add" || rawOp === "sub" || rawOp === "mul" || rawOp === "div" || rawOp === "pow" || rawOp === "mod")
+      ? (rawOp as ControlOp)
+      : "add";
+    mods.push({ sourceNode: src, op });
+  }
+  return mods;
+}
+
+function applyModifiers(
+  value: number,
+  mods: Array<{ sourceNode: Node; op: ControlOp }>,
+  values: Record<string, number>,
+  flowBottlenecks: Record<string, number>,
+): number {
+  let v = value;
+  for (const m of mods) {
+    const input = valueOfNode(m.sourceNode, values, flowBottlenecks);
+    v = applyOperation(v, input, m.op);
+  }
+  return v;
+}
+
+function getRounding(node: Node | undefined): { enabled: boolean; direction: "up" | "down" } {
+  if (!node?.data?.roundingEnabled) return { enabled: false, direction: "down" };
+  const dir = node.data.roundingDirection === "up" ? "up" : "down";
+  return { enabled: true, direction: dir };
+}
+
+function roundValue(value: number, rounding: { enabled: boolean; direction: "up" | "down" }): number {
+  if (!rounding.enabled || !Number.isFinite(value)) return value;
+  return rounding.direction === "up" ? Math.ceil(value) : Math.floor(value);
+}
+
+function roundNodeValue(nodeId: string, value: number, nodesById: Map<string, Node>): number {
+  const node = nodesById.get(nodeId);
+  return roundValue(value, getRounding(node));
+}
+
+function applyNodeRounding(state: Record<string, number>, nodes: Node[], nodesById: Map<string, Node>): void {
+  for (const node of nodes) {
+    if (state[node.id] !== undefined) {
+      state[node.id] = roundNodeValue(node.id, state[node.id], nodesById);
+    }
+  }
+}
 
 function resolveExpressionNodes(
   ctx: Pick<StepContext, "expressionNodes">,
@@ -104,6 +164,7 @@ function computeFlowBottlenecks(
   stepState: Record<string, number>,
   loopDiscrepancyById: Map<string, number>,
   loopCorrectiveById: Map<string, number>,
+  loopEffectiveMultiplierById: Map<string, number>,
   edges: Edge[],
 ): Record<string, number> {
   const { nodes, nodesById, loopIndex, delayedValue } = ctx;
@@ -165,7 +226,16 @@ function computeFlowBottlenecks(
         );
         loopDiscrepancyById.set(loop.id, sourceGap);
         const isActive = sourceGap > 1e-9;
-        const correctiveInput = isActive ? loopCorrectiveFromGap(loop, sourceGap) : 0;
+        let correctiveInput = isActive ? loopCorrectiveFromGap(loop, sourceGap) : 0;
+        const correctiveMods = collectLoopOutputModifiers(
+          loop.correctiveNodeId,
+          edges,
+          nodesById,
+          new Set([loop.discrepancyNodeId]),
+        );
+        correctiveInput = applyModifiers(correctiveInput, correctiveMods, stepState, flowBottleneckRaw);
+        const loopRound = loop.roundingEnabled ? { enabled: true, direction: (loop.roundingDirection ?? "down") as "up" | "down" } : { enabled: false, direction: "down" as const };
+        correctiveInput = roundValue(correctiveInput, loopRound);
         let zeroHold = ctx.loopZeroHoldById.get(loop.id) ?? false;
         if (!isActive) zeroHold = false;
         else if (loop.operation === "sub" && correctiveInput >= current - 1e-9) zeroHold = true;
@@ -178,12 +248,23 @@ function computeFlowBottlenecks(
       }
       for (const loop of reinforcingFlowLoops) {
         const scope = reinforcingDelayedScope(loop, stepState, ctx.stateHistory);
-        const multiplier = reinforcingMultiplierFromScope(loop, scope);
+        let multiplier = reinforcingMultiplierFromScope(loop, scope);
+        const multiplierMods = collectLoopOutputModifiers(
+          loop.multiplierNodeId,
+          edges,
+          nodesById,
+          new Set([loop.stockId, ...(loop.growthLimitNodeId ? [loop.growthLimitNodeId] : [])]),
+        );
+        multiplier = applyModifiers(multiplier, multiplierMods, stepState, flowBottleneckRaw);
+        const loopRound = loop.roundingEnabled ? { enabled: true, direction: (loop.roundingDirection ?? "down") as "up" | "down" } : { enabled: false, direction: "down" as const };
+        multiplier = roundValue(multiplier, loopRound);
         current = loop.polarity === "negative" ? current - multiplier : current + multiplier;
         if (loop.clampNonNegative) current = Math.max(0, current);
+        loopEffectiveMultiplierById.set(loop.id, multiplier);
       }
     }
-    flowBottleneckRaw[node.id] = Math.max(0, Number.isFinite(current) ? current : 0);
+    const proposedRate = Math.max(0, Number.isFinite(current) ? current : 0);
+    flowBottleneckRaw[node.id] = roundNodeValue(node.id, proposedRate, nodesById);
   }
 
   return flowBottleneckRaw;
@@ -226,8 +307,14 @@ function evaluateStepFlows(
   let stepState = resolveExpressionNodes(exprCtx, inputState, {}, ctx.delayedValue);
   applyQuantityNodeInputs(ctx.nodes, ctx.edges, ctx.nodesById, stepState, {});
   stepState = resolveExpressionNodes(exprCtx, stepState, {}, ctx.delayedValue);
+  for (const node of exprCtx.expressionNodes) {
+    if (stepState[node.id] !== undefined) {
+      stepState[node.id] = roundNodeValue(node.id, stepState[node.id], ctx.nodesById);
+    }
+  }
   const loopDiscrepancyById = new Map<string, number>();
   const loopCorrectiveById = new Map<string, number>();
+  const loopEffectiveMultiplierById = new Map<string, number>();
   const flowCtx: StepContext = {
     ...ctx,
     loopZeroHoldById,
@@ -237,6 +324,7 @@ function evaluateStepFlows(
     stepState,
     loopDiscrepancyById,
     loopCorrectiveById,
+    loopEffectiveMultiplierById,
     ctx.edges,
   );
   const flowEffectiveRate = clampFlowRatesByStock(
@@ -253,6 +341,7 @@ function evaluateStepFlows(
     flowEffectiveRate,
     loopDiscrepancyById,
     loopCorrectiveById,
+    loopEffectiveMultiplierById,
   };
 }
 
@@ -355,6 +444,7 @@ function settleStepState(
   flowEffectiveRate: Record<string, number>,
   loopDiscrepancyById: Map<string, number>,
   loopCorrectiveById: Map<string, number>,
+  loopEffectiveMultiplierById: Map<string, number>,
   fallbackLoopState: Record<string, number>,
 ): Record<string, number> {
   for (const node of ctx.nodes) {
@@ -370,13 +460,21 @@ function settleStepState(
   settledState = resolveExpressionNodes(exprCtx, settledState, flowEffectiveRate, ctx.delayedValue);
 
   for (const loop of ctx.feedbackLoops) {
-    if (loop.type !== "balancing") continue;
-    const discrepancy =
-      loopDiscrepancyById.get(loop.id) ??
-      loopGapWithDelay(loop, fallbackLoopState, ctx.stateHistory, ctx.loopIndex.goalFallbackByLoopId);
-    settledState[loop.discrepancyNodeId] = discrepancy;
-    settledState[loop.correctiveNodeId] = loopCorrectiveById.get(loop.id) ?? 0;
+    if (loop.type === "balancing") {
+      const discrepancy =
+        loopDiscrepancyById.get(loop.id) ??
+        loopGapWithDelay(loop, fallbackLoopState, ctx.stateHistory, ctx.loopIndex.goalFallbackByLoopId);
+      settledState[loop.discrepancyNodeId] = discrepancy;
+      settledState[loop.correctiveNodeId] = loopCorrectiveById.get(loop.id) ?? 0;
+    } else {
+      const eff = loopEffectiveMultiplierById.get(loop.id);
+      if (eff !== undefined) {
+        settledState[loop.multiplierNodeId] = eff;
+      }
+    }
   }
+
+  applyNodeRounding(settledState, ctx.nodes, ctx.nodesById);
 
   return settledState;
 }
@@ -401,6 +499,7 @@ function simulateEulerStep(
     evaluation.flowEffectiveRate,
     evaluation.loopDiscrepancyById,
     evaluation.loopCorrectiveById,
+    evaluation.loopEffectiveMultiplierById,
     evaluation.stepState,
   );
 }
@@ -503,6 +602,7 @@ function simulateRk4Step(
     finalEvaluation.flowEffectiveRate,
     finalEvaluation.loopDiscrepancyById,
     finalEvaluation.loopCorrectiveById,
+    finalEvaluation.loopEffectiveMultiplierById,
     finalEvaluation.stepState,
   );
 }
@@ -546,6 +646,8 @@ export function simulateTimeline(
     loopZeroHoldById.set(loop.id, false);
   }
   stateHistory.push({ ...state });
+
+  applyNodeRounding(state, nodes, nodesById);
 
   const initialValues: Record<string, number> = {};
   for (const node of nodes) {

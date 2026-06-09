@@ -34,15 +34,15 @@ def sentence_case(text: str) -> str:
 
 
 def remove_task_leading_phrases(text: str) -> str:
-    """Remove scaffolding phrases before a single lesson-specific instruction is added."""
     cleaned = " ".join(text.strip().split())
     prefixes = (
         "Reference graph: inspect the structure, run the simulation, and use it as an example. ",
         "Use this finished graph. Run it and use it as an example. ",
         "Almost complete: most stock and flow nodes are placed, but a couple of stock and flow connections are missing. ",
         "Almost complete: most nodes are placed, but one formula and a couple of connections are missing. ",
-        "Almost done: most stock and flow nodes are already placed. Add the missing stock and flow links. ",
-        "Almost done: most nodes are already placed. Add the missing formula and links. ",
+        "Add the missing stock and flow links. ",
+        "Add the missing formula and links. ",
+        "Almost done: ",
         "Blank canvas: build the model from the brief, run it, and explain the result. ",
         "Blank canvas: build the model, run it, and explain what happens. ",
         "Start from an **empty graph**. ",
@@ -153,7 +153,6 @@ SIMPLE_PHRASE_REPLACEMENTS = {
 
 
 def simplify_student_text(text: str) -> str:
-    """Keep lesson copy plain: simple punctuation, fewer special signs, shorter terms."""
     if not isinstance(text, str) or not text:
         return text
     cleaned = text
@@ -186,7 +185,6 @@ def simplify_graph_text(graph: dict) -> dict:
 
 
 def remove_starter_comment_nodes(graph: dict) -> dict:
-    """Remove visible note cards from task graphs, but keep boundary frames."""
     nodes = graph.get("nodes", [])
     edges = graph.get("edges", [])
     if not isinstance(nodes, list):
@@ -223,7 +221,6 @@ def remove_starter_comment_nodes(graph: dict) -> dict:
 
 
 def colorize_graph(graph: dict) -> dict:
-    """Apply varied, role-aware node colors to seeded lesson graphs."""
     nodes = graph.get("nodes", [])
     edges = graph.get("edges", [])
     if not isinstance(nodes, list) or not isinstance(edges, list):
@@ -295,7 +292,6 @@ def graph_nodes_overlap(a: dict, b: dict, *, padding: float = 70) -> bool:
 
 
 def beautify_graph_layout(graph: dict) -> dict:
-    """Spread seeded graphs so task canvases open as readable system pictures."""
     nodes = graph.get("nodes", [])
     if not isinstance(nodes, list) or len(nodes) < 2:
         return graph
@@ -376,7 +372,6 @@ def build_graph_node(
     visual_theme: str = "",
     fill_cap: float = 0,
 ) -> dict:
-    """Return a graph node in the format expected by labStore.loadGraphJson"""
     row: dict = {
         "id": node_id,
         "kind": kind,
@@ -404,6 +399,10 @@ def build_graph_node(
         row["visual_theme"] = visual_theme
     if fill_cap and kind == "stockNode":
         row["fill_cap"] = fill_cap
+
+    if row.get("student_tooltip"):
+        row["student_tooltip"] = remove_task_leading_phrases(row["student_tooltip"])
+
     return row
 
 
@@ -533,7 +532,6 @@ def make_constant_node(
 
 
 def make_inflow_edge(edge_id: str, flow_id: str, stock_id: str) -> dict:
-    """Flow → Stock edge (adds to the stock)."""
     return {
         "id": edge_id,
         "source": flow_id,
@@ -551,7 +549,6 @@ def make_inflow_edge(edge_id: str, flow_id: str, stock_id: str) -> dict:
 
 
 def make_outflow_edge(edge_id: str, stock_id: str, flow_id: str) -> dict:
-    """Stock → Flow edge (draws from the stock)."""
     return {
         "id": edge_id,
         "source": stock_id,
@@ -578,7 +575,6 @@ def make_feedback_edge(
     polarity: str = "",
     persistent: bool = False,
 ) -> dict:
-    """Feedback (info-only) edge: kind=neutral, feedback_loop=True."""
     return {
         "id": edge_id,
         "source": source,
@@ -611,7 +607,6 @@ def make_balancing_loop(
     delay_enabled: bool = False,
     delay_steps: int = 0,
 ) -> dict:
-    """Return a BalancingFeedbackLoop record as expected by labStore.loadGraphJson."""
     return {
         "id": loop_id,
         "type": "balancing",
@@ -645,7 +640,6 @@ def make_reinforcing_loop(
     delay_steps: int = 0,
     growth_limit_id: str | None = None,
 ) -> dict:
-    """Return a ReinforcingFeedbackLoop record as expected by labStore.loadGraphJson."""
     loop: dict = {
         "id": loop_id,
         "type": "reinforcing",
@@ -703,6 +697,10 @@ def make_comment_node(
         row["boundary_mode"] = True
         row["frame_width"] = frame_width
         row["frame_height"] = frame_height
+
+    if row.get("comment_text"):
+        row["comment_text"] = remove_task_leading_phrases(row["comment_text"])
+
     return row
 
 
@@ -715,7 +713,6 @@ def make_almost_done_graph(
     note: str,
     clear_one_expression: bool = True,
 ) -> dict:
-    """Create a scaffolded graph with a couple of intentional gaps for Task 2."""
     graph = deepcopy(base_graph)
     nodes = graph.setdefault("nodes", [])
     edges = graph.setdefault("edges", [])
@@ -834,7 +831,7 @@ Use the lab to connect each diagram to the simulation chart.
 - **Task 2: Personal budget transfers**  
   Finish a personal budget transfer model by reconnecting the missing stock and flow links.
 - **Task 3: Household energy**  
-  Build a household energy model from a blank canvas using only stocks and flows.
+    Build a household energy model using only stocks and flows.
 - **Task 4: Population age groups**  
   Build population age groups with births, aging, and deaths.
 """
@@ -1119,8 +1116,8 @@ LESSON_STOCKS_FLOWS = {
         {
             "title": "Task 1: Town water supply",
             "description": (
-                "Open the finished town water graph. Trace rain and intake into the reservoir, pumping into treatment, "
-                "delivery to households, and losses through use, evaporation, and leaks. Use only stock and flow language."
+                "Trace rain and intake into the reservoir, pumping into treatment, delivery to households, and losses "
+                "through use, evaporation, and leaks. Use only stock and flow language."
             ),
             "graph": STOCKS_FLOWS_DEMO,
             "order_index": 0,
@@ -1193,7 +1190,7 @@ Each task asks you to separate stocks, flows, constants, and variables in a diff
 
 
 - **Task 1: Bakery production parameters**  
-  Use the finished bakery graph to identify oven count and loaves per oven as constants, baking rate as a variable, and bread inventory as a stock.
+    Identify oven count and loaves per oven as constants, baking rate as a variable, and bread inventory as a stock in the bakery graph.
 - **Task 2: Cafeteria lunch prep**  
   Finish the cafeteria model by adding the missing serving formula and information arrow.
 - **Task 3: Pasture carrying capacity**  
@@ -1535,7 +1532,7 @@ CONSTANTS_CAFE_ALMOST = compose_graph(
     nodes=[
         make_comment_node(
             "cafe_todo",
-            "Almost done: meal stock, cooking capacity, expected demand, and serving pressure are placed. Add the missing serving formula and reconnect serving pressure to the serving flow.",
+            "Add the missing serving formula and reconnect serving pressure to the serving flow.",
             20,
             20,
         ),
@@ -1709,11 +1706,11 @@ The lab moves from a finished reference graph to guided completion and then blan
 
 
 - **Task 1: Thermostat stability**  
-  Use the finished thermostat graph to trace goal, gap, corrective action, heating, and cooling.
+    Trace goal, gap, corrective action, heating, and cooling in the thermostat model.
 - **Task 2: Student self evaluation**  
   Finish the student performance loop so study effort moves performance toward the target grade.
 - **Task 3: Shop inventory**  
-  Build a shop inventory balancing loop from a blank canvas.
+    Build a shop inventory balancing loop.
 - **Task 4: Body temperature**  
   Build body temperature regulation with heat generation and heat loss around a setpoint.
 
@@ -2270,13 +2267,13 @@ Reinforcing loops explain both miracles of growth and tragic downward spirals. U
 The lab separates a finished reinforcing reference from one completion task and two blank canvas challenges.
 
 - **Task 1: Population growth (R)**  
-  Use the finished population growth reference graph to trace stock, multiplier, inflow, and stock again.
+    Trace stock, multiplier, inflow, and stock again in the population growth reference graph.
 - **Task 2: Self confidence spiral**  
   Finish the self confidence spiral by adding the multiplier expression and reinforcing information links.
 - **Task 3: Compound interest**  
-  Build a compound interest reinforcing loop from a blank canvas.
+    Build a compound interest reinforcing loop.
 - **Task 4: Viral adoption**  
-  Build a viral adoption reinforcing loop from a blank canvas.
+    Build a viral adoption reinforcing loop.
 
 Mastering reinforcing loops is crucial, they drive most of the dramatic change we see in economies, populations, technologies, and ecosystems.
 """
@@ -2507,7 +2504,7 @@ The lab uses delayed balancing loops in inventory, pollution, management, and su
 
 
 - **Task 1: Car dealership**  
-  Use the finished car dealership graph to trace target inventory, delayed reorder correction, shipments, and customer sales.
+    Trace target inventory, delayed reorder correction, shipments, and customer sales in the car dealership model.
 - **Task 2: Pollution visibility**  
   Finish the pollution visibility model by completing the delayed response path.
 - **Task 3: Decision making lag**  
@@ -3022,7 +3019,7 @@ The lab uses resilience examples from ecosystems, cities, health, and biodiversi
 
 
 - **Task 1: Forest after fire**  
-  Use the finished forest graph to identify tree cover, soil organic matter, animal activity, the fire shock, and parallel recovery paths.
+    Identify tree cover, soil organic matter, animal activity, the fire shock, and parallel recovery paths in the forest model.
 - **Task 2: City economy after crisis**  
   Finish the city recovery model by adding the missing recovery formula and connecting the support path.
 - **Task 3: Personal health recovery**  
@@ -3317,7 +3314,7 @@ The lab moves from ant hill emergence to markets, cities, and immune response.
 
 
 - **Task 1: Ant hill emergence**  
-  Use the finished ant hill graph to explain how local rule constants and repeated worker deposition create global structure without a boss node.
+    Explain how local rule constants and repeated worker deposition create global structure without a boss node in the ant hill model.
 - **Task 2: Free market pricing**  
   Finish the market model by adding the missing price formula and reconnecting the signal path.
 - **Task 3: Organic city growth**  
@@ -3409,7 +3406,7 @@ LESSON_SELF_ORGANIZATION = {
         {
             "title": "Task 2: Free market pricing",
             "description": (
-                "On a **blank canvas**, sketch a toy market: buyers, sellers, inventory, and a price variable that "
+                "Sketch a toy market: buyers, sellers, inventory, and a price variable that "
                 "updates from local excess demand (no central planner)."
             ),
             "graph": EMPTY_GRAPH,
@@ -3490,7 +3487,7 @@ The lab uses hierarchy stacks to show what changes when you move between levels.
 
 
 - **Task 1: Environmental five level stack**  
-  Use the finished individual to planet hierarchy to trace how flows roll lower level activity into higher level stocks.
+    Trace how flows roll lower level activity into higher level stocks in the individual to planet hierarchy.
 - **Task 2: Biological hierarchy**  
   Finish the biological hierarchy by reconnecting the missing roll up path.
 - **Task 3: Company hierarchy**  
@@ -3736,7 +3733,7 @@ The lab makes the boundary visible, then asks you to widen or shift it.
 
 
 - **Task 1: University system**  
-  Use the finished university boundary graph to separate inside stocks and flows from outside drivers.
+    Separate inside stocks and flows from outside drivers in the university boundary graph.
 - **Task 2: City vs metro**  
   Finish the city vs metro boundary model by adding the missing metro stock and commuter connection.
 - **Task 3: Personal to society**  
@@ -3840,7 +3837,7 @@ LESSON_BOUNDARIES = {
         {
             "title": "Task 2: City vs metro",
             "description": (
-                "On a **blank canvas**, draw two frames: **city limits** vs **metropolitan region**. "
+                "Draw two frames: **city limits** vs **metropolitan region**. "
                 "List at least one stock that appears only when you widen to the metro boundary."
             ),
             "graph": EMPTY_GRAPH,
@@ -3920,7 +3917,7 @@ The lab uses the same S curve structure in business, population, technology, and
 
 
 - **Task 1: Business vs market limit**  
-  Use the finished business growth graph to identify the growth engine, the market ceiling, and the slow fast slow S curve phases.
+    Identify the growth engine, the market ceiling, and the slow fast slow S curve phases in the business growth graph.
 - **Task 2: Population and resources**  
   Finish the population resource model by completing the headroom limited growth path.
 - **Task 3: Technology adoption**  
@@ -4257,7 +4254,7 @@ The missing balancing loop is a strong enough limit or rule on total withdrawals
 ### In the Lab
 
 - **Task 1: Overgrazing pasture**  
-  Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.
+    Trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth in the pasture commons graph.
 - **Task 2: Ocean overfishing**  
   Finish the fishery commons model by completing the missing private incentive path.
 - **Task 3: City air pollution**  
@@ -4316,7 +4313,7 @@ Neither side necessarily wants the race. The structure keeps driving both upward
 ### In the Lab
 
 - **Task 1: Arms race**  
-  Use the finished arms race graph to trace the two cross reinforcing buildup paths.
+    Trace the two cross reinforcing buildup paths in the arms race model.
 - **Task 2: Price war**  
   Finish the price war model by completing the missing cross response path.
 - **Task 3: Social media outrage**  
@@ -4576,7 +4573,7 @@ ESCALATION_DEMO = compose_graph(
 TRAGEDY_FISHERY_ALMOST = make_almost_done_graph(
     TRAGEDY_DEMO,
     note=(
-        "Almost done: this is the ocean-fishery version of the commons pattern. "
+        "This is the ocean-fishery version of the commons pattern. "
         "Finish the missing private incentive formula/links so fleet growth can drain the shared fish stock."
     ),
 )
@@ -4760,7 +4757,7 @@ Ask:
 ### In the Lab
 
 - **Task 1: Cramming vs study habit**
-  Use the finished student graph to trace learning pressure, cramming relief, steady learning, habit building, and dependency drain.
+    Trace learning pressure, cramming relief, steady learning, habit building, and dependency drain in the student model.
 - **Task 2: Sleep aid dependence**
   Finish the sleep model by adding the missing sleep-aid response formula and reconnecting the quick-fix path.
 - **Task 3: Farm fertilizer dependence**
@@ -4947,7 +4944,7 @@ SHIFTING_BURDEN_SLEEP_ALMOST = compose_graph(
     nodes=[
         make_comment_node(
             "sbs_todo",
-            "Almost done: sleep debt, natural sleep capacity, routine practice, and the side-effect drain are placed. Add the sleep-aid response formula and reconnect the quick-fix path before running.",
+            "Sleep debt, natural sleep capacity, routine practice, and the side-effect drain are placed. Add the sleep-aid response formula and reconnect the quick-fix path before running.",
             20,
             20,
         ),
@@ -5115,7 +5112,7 @@ Do not judge a fix only by its first result. Ask what behavior the fix encourage
 ### In the Lab
 
 - **Task 1: More roads, more traffic**
-  Use the finished road model to trace congestion relief, road capacity, induced demand, and delayed return of congestion.
+    Trace congestion relief, road capacity, induced demand, and delayed return of congestion in the road model.
 - **Task 2: Pesticide rebound**
   Finish the pest model by adding the missing pesticide response and rebound signal.
 - **Task 3: Overtime in a software project**
@@ -5216,7 +5213,7 @@ FIXES_FAIL_PEST_ALMOST = compose_graph(
     nodes=[
         make_comment_node(
             "ffp_todo",
-            "Almost done: pests, pesticide kill, predator control, and rebound pressure are placed. Add the pesticide response formula and reconnect the delayed rebound signal.",
+            "Pests, pesticide kill, predator control, and rebound pressure are placed. Add the pesticide response formula and reconnect the delayed rebound signal.",
             20,
             20,
         ),
@@ -5290,7 +5287,7 @@ Keep standards independent from the current bad state, or let goals be pulled up
 ### In the Lab
 
 - **Task 1: Service quality drift**
-  Use the finished service model to trace quality, standard, improvement work, slippage, and goal erosion.
+    Trace quality, standard, improvement work, slippage, and goal erosion in the service model.
 - **Task 2: Software deadline and scope**
   Finish the software model by adding the missing scope erosion formula and reconnecting the goal-adjustment path.
 - **Task 3: School homework standards**
@@ -5325,7 +5322,7 @@ ERODING_GOALS_DEMO = compose_graph(
 
 ERODING_GOALS_SOFTWARE_ALMOST = compose_graph(
     nodes=[
-        make_comment_node("egs_todo", "Almost done: delivered quality, accepted standard, improvement work, and slippage are placed. Add the goal erosion formula and reconnect the standard-adjustment path.", 20, 20),
+        make_comment_node("egs_todo", "Delivered quality, accepted standard, improvement work, and slippage are placed. Add the goal erosion formula and reconnect the standard-adjustment path.", 20, 20),
         make_stock_node("egs_quality", "Delivered software quality", 420, 280, quantity=58, unit="index"),
         make_stock_node("egs_standard", "Accepted quality bar", 650, 280, quantity=84, unit="index"),
         make_flow_node("egs_improve", "Refactoring and testing", 140, 280, bottleneck=0, expression="max(0, (0) + (egs_effort))", base_flow_expression="0", unit="index/step"),
@@ -5386,7 +5383,7 @@ Use diversity, caps, antitrust-like limits, rotating access, or support for weak
 ### In the Lab
 
 - **Task 1: Two student projects**
-  Use the finished graph to trace how teacher feedback follows early project quality and widens the difference.
+    Trace how teacher feedback follows early project quality and widens the difference.
 - **Task 2: Platform recommendation loop**
   Finish the platform model by adding the missing visibility share formula and information links.
 - **Task 3: Two startups competing for investment**
@@ -5429,7 +5426,7 @@ SUCCESS_SUCCESSFUL_DEMO = compose_graph(
 
 SUCCESS_SUCCESSFUL_PLATFORM_ALMOST = compose_graph(
     nodes=[
-        make_comment_node("s2sp_todo", "Almost done: creators, recommendation pool, and improvement flows are placed. Add the missing visibility share formula and reconnect the information links.", 20, 20),
+        make_comment_node("s2sp_todo", "Creators, recommendation pool, and improvement flows are placed. Add the missing visibility share formula and reconnect the information links.", 20, 20),
         make_stock_node("s2sp_a", "Creator A audience", 300, 280, quantity=58, unit="k users"),
         make_stock_node("s2sp_b", "Creator B audience", 620, 280, quantity=44, unit="k users"),
         make_constant_node("s2sp_pool", "Recommendation slots", 460, 80, quantity=16, unit="slots/step"),
@@ -5493,7 +5490,7 @@ Set capacity goals from expected future demand, not only current demand. Protect
 ### In the Lab
 
 - **Task 1: Rail capacity underinvestment**
-  Use the finished rail model to trace ridership growth, service quality, capacity gap, delayed investment, and lost riders.
+    Trace ridership growth, service quality, capacity gap, delayed investment, and lost riders in the rail model.
 - **Task 2: Clinic appointment capacity**
   Finish the clinic model by adding the missing investment formula and reconnecting the quality-capacity path.
 - **Task 3: SaaS infrastructure growth**
@@ -5542,7 +5539,7 @@ GROWTH_UNDERINVESTMENT_DEMO = compose_graph(
 
 GROWTH_UNDERINVESTMENT_CLINIC_ALMOST = compose_graph(
     nodes=[
-        make_comment_node("guc_todo", "Almost done: patient demand, clinic capacity, service quality, and lost patients are placed. Add the delayed investment formula and reconnect the capacity-quality path.", 20, 20),
+        make_comment_node("guc_todo", "Patient demand, clinic capacity, service quality, and lost patients are placed. Add the delayed investment formula and reconnect the capacity-quality path.", 20, 20),
         make_stock_node("guc_demand", "Patient appointment demand", 420, 280, quantity=42, unit="visits"),
         make_stock_node("guc_capacity", "Clinician capacity", 650, 280, quantity=30, unit="visits"),
         make_flow_node("guc_growth_flow", "New patient demand", 140, 280, bottleneck=0, expression="max(0, (0) + (guc_growth))", base_flow_expression="0", unit="visits/step"),
@@ -5587,7 +5584,7 @@ RESILIENCE_CITY_ALMOST = compose_graph(
     nodes=[
         make_comment_node(
             "city_todo",
-            "Almost done: finish two details. Add the recovery formula and reconnect the missing information links so municipal capacity helps employment recover.",
+            "Finish two details. Add the recovery formula and reconnect the missing information links so municipal capacity helps employment recover.",
             20,
             20,
         ),
@@ -5671,7 +5668,7 @@ SELF_ORG_MARKET_ALMOST = compose_graph(
     nodes=[
         make_comment_node(
             "market_todo",
-            "Almost done: add the price adjustment formula and reconnect local demand and supply signals. There should be no central planner node.",
+            "Add the price adjustment formula and reconnect local demand and supply signals. There should be no central planner node.",
             20,
             20,
         ),
@@ -5754,7 +5751,7 @@ BOUNDARIES_CITY_ALMOST = compose_graph(
         ),
         make_comment_node(
             "metro_todo",
-            "Almost done: add the metro stock outside the frame and connect commuters so the wider boundary changes the story.",
+            "Add the metro stock outside the frame and connect commuters so the wider boundary changes the story.",
             20,
             20,
         ),
@@ -5832,7 +5829,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Stocks and Flows": [
         (
             "Task 1: Town water supply",
-            "Open the finished town water graph. Trace how water moves through reservoir, treatment, and household storage, then identify which flows add and which flows drain.",
+            "Trace how water moves through reservoir, treatment, and household storage, then identify which flows add and which flows drain.",
         ),
         (
             "Task 2: Personal budget transfers",
@@ -5850,7 +5847,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Constants and Variables": [
         (
             "Task 1: Bakery production parameters",
-            "Use the finished bakery graph to identify the oven count and loaves per oven constants, then explain how the baking rate variable feeds the inventory inflow.",
+            "Identify the oven count and loaves per oven constants, then explain how the baking rate variable feeds the inventory inflow in the bakery graph.",
         ),
         (
             "Task 2: Cafeteria lunch prep",
@@ -5868,7 +5865,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Balancing Loop": [
         (
             "Task 1: Thermostat stability",
-            "Use the finished thermostat graph to trace goal, gap, corrective action, heating, and cooling. Change the setpoint and describe how the stock moves.",
+            "Trace goal, gap, corrective action, heating, and cooling in the thermostat model. Change the setpoint and describe how the stock moves.",
         ),
         (
             "Task 2: Student self evaluation",
@@ -5886,7 +5883,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Reinforcing Loop": [
         (
             "Task 1: Population growth (R)",
-            "Use the finished population growth graph to trace stock, multiplier, inflow, and stock again. Explain why the curve bends upward.",
+            "Trace stock, multiplier, inflow, and stock again in the population growth graph. Explain why the curve bends upward.",
         ),
         (
             "Task 2: Self confidence spiral",
@@ -5904,7 +5901,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Delay": [
         (
             "Task 1: Car dealership",
-            "Use the finished dealership graph to trace target inventory, delayed reorder correction, shipments, and customer sales. Explain the oscillation.",
+            "Trace target inventory, delayed reorder correction, shipments, and customer sales in the dealership graph. Explain the oscillation.",
         ),
         (
             "Task 2: Pollution visibility",
@@ -5922,7 +5919,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Resilience": [
         (
             "Task 1: Forest after fire",
-            "Use the finished forest graph to identify multiple stocks, the fire shock, and parallel recovery paths that make the ecosystem resilient.",
+            "Identify multiple stocks, the fire shock, and parallel recovery paths that make the ecosystem resilient in the forest model.",
         ),
         (
             "Task 2: City economy after crisis",
@@ -5940,7 +5937,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Self-Organization": [
         (
             "Task 1: Ant hill emergence",
-            "Use the finished ant hill graph to explain how local rule constants and repeated worker deposition create global structure without a boss node.",
+            "Explain how local rule constants and repeated worker deposition create global structure without a boss node in the ant hill model.",
         ),
         (
             "Task 2: Free market pricing",
@@ -5958,7 +5955,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Hierarchy": [
         (
             "Task 1: Environmental five level stack",
-            "Use the finished individual to planet hierarchy to trace how flows roll lower level activity into higher level stocks.",
+            "Trace how flows roll lower level activity into higher level stocks in the individual to planet hierarchy.",
         ),
         (
             "Task 2: Biological hierarchy",
@@ -5976,7 +5973,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Boundaries": [
         (
             "Task 1: University system",
-            "Use the finished university boundary graph to separate inside stocks/flows from outside drivers and explain why the line matters.",
+            "Separate inside stocks/flows from outside drivers in the university boundary graph and explain why the line matters.",
         ),
         (
             "Task 2: City vs metro",
@@ -5994,7 +5991,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Limits to Growth and the S-Curve": [
         (
             "Task 1: Business vs market limit",
-            "Use the finished business growth graph to identify the growth engine, the market ceiling, and the slow fast slow S curve phases.",
+            "Identify the growth engine, the market ceiling, and the slow fast slow S curve phases in the business growth graph.",
         ),
         (
             "Task 2: Population and resources",
@@ -6012,7 +6009,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Tragedy of the Commons": [
         (
             "Task 1: Overgrazing pasture",
-            "Use the finished pasture commons graph to trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth.",
+            "Trace shared grass, herd growth incentives, grazing pressure, and ecological regrowth in the pasture commons graph.",
         ),
         (
             "Task 2: Ocean overfishing",
@@ -6030,7 +6027,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Escalation": [
         (
             "Task 1: Arms race",
-            "Use the finished arms race graph to trace the two cross reinforcing buildup paths and predict behavior if neither side changes rules.",
+            "Trace the two cross reinforcing buildup paths in the arms race graph and predict behavior if neither side changes rules.",
         ),
         (
             "Task 2: Price war",
@@ -6048,7 +6045,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Shifting the Burden": [
         (
             "Task 1: Cramming vs study habit",
-            "Use the finished student model to trace learning pressure, cramming relief, steady learning, habit building, and the dependency drain.",
+            "Trace learning pressure, cramming relief, steady learning, habit building, and the dependency drain in the student model.",
         ),
         (
             "Task 2: Sleep aid dependence",
@@ -6066,7 +6063,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Fixes that Fail": [
         (
             "Task 1: More roads, more traffic",
-            "Use the finished road model to trace congestion relief, road capacity growth, induced demand, and the delayed return of congestion.",
+            "Trace congestion relief, road capacity growth, induced demand, and the delayed return of congestion in the road model.",
         ),
         (
             "Task 2: Pesticide rebound",
@@ -6084,7 +6081,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Eroding Goals": [
         (
             "Task 1: Service quality drift",
-            "Use the finished service model to trace real quality, the quality standard, improvement work, slippage, and pressure to lower the goal.",
+            "Trace real quality, the quality standard, improvement work, slippage, and pressure to lower the goal in the service model.",
         ),
         (
             "Task 2: Software deadline and scope",
@@ -6102,7 +6099,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Success to the Successful": [
         (
             "Task 1: Two student projects",
-            "Use the finished project model to explain how a small initial advantage attracts more feedback and becomes a larger advantage.",
+            "Explain how a small initial advantage attracts more feedback and becomes a larger advantage in the project model.",
         ),
         (
             "Task 2: Platform recommendation loop",
@@ -6120,7 +6117,7 @@ TASK_COPY_OVERRIDES: dict[str, list[tuple[str, str]]] = {
     "Growth and Underinvestment": [
         (
             "Task 1: Rail capacity underinvestment",
-            "Use the finished rail model to trace ridership growth, service quality, capacity gap, delayed investment, and lost riders.",
+            "Trace ridership growth, service quality, capacity gap, delayed investment, and lost riders in the rail model.",
         ),
         (
             "Task 2: Clinic appointment capacity",
@@ -6159,10 +6156,7 @@ def apply_task_scaffolding(lesson: dict) -> dict:
             continue
 
         first = group[0]
-        first["description"] = (
-            "Use this finished graph. Run it and use it as an example. "
-            f"{remove_task_leading_phrases(first['description'])}"
-        )
+        first["description"] = remove_task_leading_phrases(first["description"])
 
         if len(group) >= 2:
             second = group[1]
@@ -6177,21 +6171,11 @@ def apply_task_scaffolding(lesson: dict) -> dict:
                         "Add the missing formula and reconnect the missing information links before you run and submit."
                     ),
                 )
-            second_intro = (
-                "Almost done: most stock and flow nodes are already placed. Add the missing stock and flow links. "
-                if lesson["title"] == "Stocks and Flows"
-                else "Almost done: most nodes are already placed. Add the missing formula and links. "
-            )
-            second["description"] = (
-                f"{second_intro}{remove_task_leading_phrases(second['description'])}"
-            )
+            second["description"] = remove_task_leading_phrases(second["description"])
 
         for task in group[2:]:
             task["graph"] = EMPTY_GRAPH
-            task["description"] = (
-                "Blank canvas: build the model, run it, and explain what happens. "
-                f"{blank_canvas_task_body(task['description'])}"
-            )
+            task["description"] = blank_canvas_task_body(task["description"])
 
         for task in group:
             remove_starter_comment_nodes(task["graph"])
@@ -6320,7 +6304,6 @@ def _delete_lesson_cascade(db: Session, lesson: Lesson) -> None:
 
 
 def delete_superseded_systems_thinking_sections(db: Session) -> None:
-    """Remove old section trees (pre-2026 curriculum) so renames do not duplicate rows."""
     for title in LEGACY_SECTION_TITLES:
         section = db.query(Section).filter(Section.title == title).first()
         if section is None:
@@ -6333,11 +6316,6 @@ def delete_superseded_systems_thinking_sections(db: Session) -> None:
 
 
 def seed_systems_thinking(db: Session) -> None:
-    """Create or update systems-thinking sections, lessons, and tasks from this module.
-
-    Deletes legacy section titles in ``LEGACY_SECTION_TITLES`` once, then upserts
-    the current ``SYSTEMS_THINKING_SECTIONS`` spec.
-    """
     delete_superseded_systems_thinking_sections(db)
     for section_spec in SYSTEMS_THINKING_SECTIONS:
         upsert_systems_section(db, section_spec)
