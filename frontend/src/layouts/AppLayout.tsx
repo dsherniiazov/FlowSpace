@@ -133,7 +133,10 @@ export function AppLayout(): JSX.Element {
     () => sections.filter((section) => (lessonsBySection.get(section.id) ?? []).length > 0),
     [sections, lessonsBySection],
   );
-  const logoSrc = theme === "dark" ? "/images/flowspace_white.svg" : "/images/flowspace_black.svg";
+  const logoSrc =
+  theme === "dark"
+    ? `${import.meta.env.BASE_URL}images/flowspace_white.svg`
+    : `${import.meta.env.BASE_URL}images/flowspace_black.svg`;
   const sidebarAvatarUrl = getAvatarUrl(currentUserQuery.data?.avatar_path);
   const sidebarInitial = String(email ?? "U").slice(0, 1).toUpperCase();
 
